@@ -31,3 +31,7 @@ It might make sense to make a simple data object for the `beacon` type, this wou
 Values needed for future reference `time` when received, `payload` i.e the n value and `t` i.e the predicted t for that particular beacon.
 
 The relay does not need any timers, as the timing can be figured out using values we get back from Tx and Rx. Potentially the logic can be made even smarter and thus the radio might be turned off when no incoming data is scheduled for the next x seconds.
+
+Testing
+-------
+Based on the code samples given with the assessment, create a test SI that logs out all received frames and whether it was within correct phase or not. Also count the number of frames received from each address and log that out when the entire cycle ends (60s in the demo).
