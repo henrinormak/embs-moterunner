@@ -4,3 +4,8 @@
 *.jar
 *.war
 *.ear
+
+# Moterunner assembly files #
+*.sba
+*.sdx
+*.sxp
