@@ -11,10 +11,10 @@ public class SI {
     private static byte[] xmit;
     private static long   wait;
     static Radio radio = new Radio();
-    private static int n = 8; // number of beacons of sync phase - sample only, assessment will use unknown values
+    private static int n = 6; // number of beacons of sync phase - sample only, assessment will use unknown values
     private static int nc;
     
-    private static int t = 600; // milliseconds between beacons - sample only, assessment will use unknown values
+    private static int t = 500; // milliseconds between beacons - sample only, assessment will use unknown values
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version
@@ -24,6 +24,10 @@ public class SI {
     
     private static long receptionPhaseEnd;
     private static int demoLength = 60;
+    
+    // Counting correct packets
+    private static int inPhasePackets = 0;
+    private static int outPhasePackets = 0;
 
     static {
         // Open the default radio
@@ -101,10 +105,10 @@ public class SI {
 		// frame received, blink yellow if allowed, red if not
         if (time <= receptionPhaseEnd) {
             SI.blinkLEDAtIndex(1, 100);
-            Logger.appendString(csr.s2b("In phase packet received"));
+            inPhasePackets = inPhasePackets + 1;
         } else {
             SI.blinkLEDAtIndex(2, 100);
-            Logger.appendString(csr.s2b("Out of phase packet received"));
+            outPhasePackets = outPhasePackets + 1;
         }
 		
         // log out the payload we received
@@ -125,6 +129,13 @@ public class SI {
         SI.blinkLEDAtIndex(0, 10000);
         SI.blinkLEDAtIndex(1, 10000);
         SI.blinkLEDAtIndex(2, 10000);
+        
+        // Log out the results
+        Logger.appendString(csr.s2b("Demo ended - Correct frames "));
+        Logger.appendInt(inPhasePackets);
+        Logger.appendString(csr.s2b(", incorrect frames "));
+        Logger.appendInt(outPhasePackets);
+        Logger.flush(Mote.WARN);
     }
 
     // Called on a timer alarm
@@ -137,18 +148,11 @@ public class SI {
         	tsend.setAlarmBySpan(wait);
         	nc--;
         	xmit[11]--;
-            
-            Logger.appendString(csr.s2b("Sync "));
-            Logger.appendInt(nc);
-            Logger.flush(Mote.WARN);
         }
         else{
 	        // start receiving for t
             SI.blinkLEDAtIndex(0, t);
             receptionPhaseEnd = Time.currentTicks()+ wait;
-            
-            Logger.appendString(csr.s2b("Starting reception phase"));
-            Logger.flush(Mote.WARN);
             
             // Schedule the next sync phase
             tstart.setAlarmBySpan(6*wait);
