@@ -18,7 +18,7 @@ public class SI {
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version
-    private static byte channel = 5; // channel 11 on IEEE 802.15.4
+    private static byte channel = (byte)5; // channel 11 on IEEE 802.15.4
     private static byte panid = 0x11;
     private static byte address = 0x11;
     
