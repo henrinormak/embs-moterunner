@@ -17,7 +17,8 @@ public class SI {
     private static int t = 600; // milliseconds between beacons - sample only, assessment will use unknown values
     
     // settings for sink 
-    private static byte channel = 0; // channel 11 on IEEE 802.15.4
+    // TODO: Fix the channel numbering to be the final demo version
+    private static byte channel = 5; // channel 11 on IEEE 802.15.4
     private static byte panid = 0x11;
     private static byte address = 0x11;
     
@@ -99,7 +100,7 @@ public class SI {
         // add logging code to log out the originating source (for marking)
 		// frame received, blink yellow if allowed, red if not
         if (time <= receptionPhaseEnd) {
-            SI.blinkLEDAtIndex(0, 100);
+            SI.blinkLEDAtIndex(1, 100);
             Logger.appendString(csr.s2b("In phase packet received"));
         } else {
             SI.blinkLEDAtIndex(2, 100);
@@ -119,6 +120,11 @@ public class SI {
         
         // Stop the restart timer (to avoid sending out any more beacons)
         tstart.cancelAlarm();
+        
+        // Blink all LEDs for 10s
+        SI.blinkLEDAtIndex(0, 10000);
+        SI.blinkLEDAtIndex(1, 10000);
+        SI.blinkLEDAtIndex(2, 10000);
     }
 
     // Called on a timer alarm
@@ -138,7 +144,7 @@ public class SI {
         }
         else{
 	        // start receiving for t
-            SI.blinkLEDAtIndex(1, t);
+            SI.blinkLEDAtIndex(0, t);
             receptionPhaseEnd = Time.currentTicks()+ wait;
             
             Logger.appendString(csr.s2b("Starting reception phase"));
