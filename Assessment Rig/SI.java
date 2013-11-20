@@ -7,6 +7,7 @@ public class SI {
 
     private static Timer  tsend;
     private static Timer  tstart;
+    private static Timer  treceive;
     
     private static byte[] xmit;
     private static long   wait;
@@ -14,11 +15,11 @@ public class SI {
     private static int n = 6; // number of beacons of sync phase - sample only, assessment will use unknown values
     private static int nc;
     
-    private static int t = 500; // milliseconds between beacons - sample only, assessment will use unknown values
+    private static int t = 750; // milliseconds between beacons - sample only, assessment will use unknown values
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version
-    private static byte channel = (byte)5; // channel 11 on IEEE 802.15.4
+    private static byte channel = (byte)0; // channel 11 on IEEE 802.15.4
     private static byte panid = 0x11;
     private static byte address = 0x11;
     
@@ -74,6 +75,14 @@ public class SI {
                 }
             });
             
+        // Timer that moves starts the receive period
+        treceive = new Timer();
+        treceive.setCallback(new TimerEvent(null){
+                public void invoke(byte param, long time){
+                    SI.startReceive(param, time);
+                }
+            });
+            
         // Convert the periodic delay from ms to platform ticks
         wait = Time.toTickSpan(Time.MILLISECS, t);
         tstart.setAlarmBySpan(Time.toTickSpan(Time.SECONDS, 5)); //starts the protocol 5 seconds after constructing the assembly
@@ -103,17 +112,18 @@ public class SI {
 
         // add logging code to log out the originating source (for marking)
 		// frame received, blink yellow if allowed, red if not
-        if (time <= receptionPhaseEnd) {
+        if (Time.currentTicks() <= receptionPhaseEnd) {
             SI.blinkLEDAtIndex(1, 100);
             inPhasePackets = inPhasePackets + 1;
         } else {
             SI.blinkLEDAtIndex(2, 100);
             outPhasePackets = outPhasePackets + 1;
+            
+            Logger.appendString(csr.s2b("Out of phase "));
+            Logger.appendLong(Time.currentTicks());
+            Logger.flush(Mote.WARN);
         }
-		
-        // log out the payload we received
-        Logger.flush(Mote.WARN);
-        
+		        
         return 0;
     }
     
@@ -150,15 +160,20 @@ public class SI {
         	xmit[11]--;
         }
         else{
-	        // start receiving for t
-            SI.blinkLEDAtIndex(0, t);
-            receptionPhaseEnd = Time.currentTicks()+ wait;
+        	// Start receive phase
+            treceive.setAlarmBySpan(0);
             
             // Schedule the next sync phase
             tstart.setAlarmBySpan(6*wait);
         }
     }
-
+    
+	
+	public static void startReceive(byte param, long time) {
+	    // start receiving for t
+        SI.blinkLEDAtIndex(0, t);
+		receptionPhaseEnd = Time.currentTicks() + wait;
+	}
 
     // Called on a timer alarm, starts the protocol
     public static void restart(byte param, long time) {

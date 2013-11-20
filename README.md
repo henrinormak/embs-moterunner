@@ -32,6 +32,8 @@ Values needed for future reference `time` when received, `payload` i.e the n val
 
 The relay does not need any timers, as the timing can be figured out using values we get back from Tx and Rx. Potentially the logic can be made even smarter and thus the radio might be turned off when no incoming data is scheduled for the next x seconds.
 
+Keep track of four timings, one for each channel we have to switch to (an absolute time), this time will be recalculated when the channel session finishes (if a frame is captured or when the session ends without a capture)
+
 Testing
 -------
 Based on the code samples given with the assessment, create a test SI that logs out all received frames and whether it was within correct phase or not. Also count the number of frames received from each address and log that out when the entire cycle ends (60s in the demo).
