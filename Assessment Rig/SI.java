@@ -1,5 +1,4 @@
 package embs;
-
 import com.ibm.saguaro.system.*;
 import com.ibm.saguaro.logger.*;
 
@@ -100,6 +99,12 @@ public class SI {
         });
         
         killTimer.setAlarmBySpan(Time.toTickSpan(Time.SECONDS, demoLength)); // schedule the end of the cycle, after which nothing will be done
+        
+       	Logger.appendString(csr.s2b("Starting demo in "));
+       	Logger.appendInt(5);
+       	Logger.appendString(csr.s2b(" for "));
+       	Logger.appendInt(demoLength);
+       	Logger.flush(Mote.WARN);
     }
 
     // Called when a frame is received or at the end of a reception period
