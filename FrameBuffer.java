@@ -5,9 +5,6 @@
  * 
  * A circular buffer for frames
  * drops older frames as new overwrite them
- * 
- * TODO: In case there is a need for a more generic stack, 
- * refactor this to use generics
  *
  */
  

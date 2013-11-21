@@ -29,7 +29,7 @@ import embs.Session;
 import embs.SessionStack;
 
 public class Relay {
-    
+	
 	/**
 	 * Constants
 	 */
@@ -63,7 +63,7 @@ public class Relay {
     /**
      * Sync phases we require the system to look at, after these only the transmission phase is scheduled
      */
-    private final static int SYNC_PHASES_REQUIRED = 2;
+    private final static int SYNC_PHASES_REQUIRED = 1;
     
     /**
      * Variables
@@ -260,20 +260,28 @@ public class Relay {
                 
                 // Update the period we predict for the sink
                 // 6 = 1 reception + 5 sleep
-                channelPeriods[CHANNEL_SINK] = Time.fromTickSpan(Time.MILLISECS, currentEstimate * (6 + estimatedSinkFrame.getPayload()));
+                long period = currentEstimate * (6 + estimatedSinkFrame.getPayload());
 				
 				// Calculate the duration of the channel and the next time we have to open it
-                long timeTilNext = channelPeriods[CHANNEL_SINK];
+                long timeTilNext = period + currentEstimate - Time.toTickSpan(Time.MILLISECS, TIMING_BUFFER_MS);
                 long duration = currentEstimate;
                 if (syncPhasesSeen < SYNC_PHASES_REQUIRED) {
-					timeTilNext = currentEstimate * 6;
+					timeTilNext = currentEstimate * 7 - Time.toTickSpan(Time.MILLISECS, TIMING_BUFFER_MS);
 					duration += currentEstimate * estimatedSinkFrame.getPayload();
 				}
-				                
+				
+				channelPeriods[CHANNEL_SINK] = Time.fromTickSpan(Time.MILLISECS, period);
+				channelDurations[CHANNEL_SINK] = Time.fromTickSpan(Time.MILLISECS, duration);
+				
+				Logger.appendString(csr.s2b("Update sink period "));
+				Logger.appendLong(channelPeriods[CHANNEL_SINK]);
+				Logger.flush(Mote.WARN);
+				
                 sinkTimer.setAlarmBySpan(timeTilNext);
-                channelDurations[CHANNEL_SINK] = Time.fromTickSpan(Time.MILLISECS, duration);
 
                 // Start transmitting in t (as this is the last n)
+                // Adding t puts us well into the reception phase, which should avoid sending
+                // frames too early
                 transmissionTimer.setAlarmBySpan(currentEstimate);
                 
                 // Re-schedule the session end (in case our estimates improved or in case this was the first sync)
@@ -297,14 +305,9 @@ public class Relay {
      * @param time
      */
     private static void onSourceReceive(int flags, byte[] data, int len, int info, long time) {
-	    Logger.appendString(csr.s2b("Received frame "));
-	    Logger.appendByte(Relay.getChannel());
-	    Logger.flush(Mote.WARN);
-	    
+    	// Cheat a bit and use the channel of our radio
+    	// it would be more correct to read it out of 'data'
 	    int index = (int)Relay.getChannel();
-	    
-	    // Update the period/duration of the given timer
-	    channelDurations[index] = CHANNEL_DURATION;
 		
 		// We can immediately reschedule the timer as well (as we don't know for how long we have been listening to this channel)
 		Timer timer = channelTimers[index];
@@ -363,14 +366,12 @@ public class Relay {
     
     private static void transmitFromBuffer() {
 	    // If buffer has been emptied, then bail and take the channel with us
-/*
 	    if (frameBuffer.isEmpty()) {
 	        popTimer.setAlarmBySpan(0);
 	        return;
         }
-*/
         
-	    //Frame nextFrame = frameBuffer.pull();
+	    Frame nextFrame = frameBuffer.pull();
 		
 		// Tx handler will take care of the recursion (i.e sending more frames than 1)
 		Util.set16le(transmissionFrame, 3, estimatedSinkFrame.getPanID());
@@ -381,33 +382,7 @@ public class Relay {
 		
 		radio.transmit(Device.ASAP|Radio.TXMODE_POWER_MAX, transmissionFrame, 0, 12, 0);
     }
-    
-    /**
-     * Transmit any existing data until either the deadline or there is no data remaining
-     * @param tickSpan	relative deadline in ticks
-     */
-    private static void transmitBySpan(long tickSpan) {
-        long currentTick = Time.currentTicks();
-        long endTick = currentTick + tickSpan;
         
-/*         while (Time.currentTicks() < endTick) { */
-            // Add a test for whether there is something to send or not
-	        // Because if there is nothing to send we are better off listening
-	        // to other channels than wasting our time here
-			// Put together a frame to send DEBUGGING
-			byte[] xmit = new byte[12];
-	        xmit[0] = Radio.FCF_BEACON;
-	        xmit[1] = Radio.FCA_SRC_SADDR|Radio.FCA_DST_SADDR;
-	        Util.set16le(xmit, 3, 0x11); // destination PAN address 
-	        Util.set16le(xmit, 5, 0x11); // broadcast address 
-	        Util.set16le(xmit, 7, 0x11); // own PAN address 
-	        Util.set16le(xmit, 9, 0x15); // own short address 
-	        xmit[11] = (byte)0;
-	        
-		    radio.transmit(Device.ASAP|Radio.TXMODE_POWER_MAX, xmit, 0, 12, 0);
-/*         } */
-    }
-    
         
     /**
      * Session management

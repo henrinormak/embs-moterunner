@@ -6,9 +6,6 @@
  * A simple data structure to represent
  * a stack - as the Java Stack is not available
  * 
- * TODO: In case there is a need for a more generic stack, 
- * refactor this to use generics
- * 
  */
 
 package embs;

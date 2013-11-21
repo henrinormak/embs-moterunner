@@ -12,10 +12,10 @@ public class SI {
     private static byte[] xmit;
     private static long   wait;
     static Radio radio = new Radio();
-    private static int n = 6; // number of beacons of sync phase - sample only, assessment will use unknown values
+    private static int n = 3; // number of beacons of sync phase - sample only, assessment will use unknown values
     private static int nc;
     
-    private static int t = 750; // milliseconds between beacons - sample only, assessment will use unknown values
+    private static int t = 700; // milliseconds between beacons - sample only, assessment will use unknown values
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version
