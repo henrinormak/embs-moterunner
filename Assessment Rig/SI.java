@@ -18,7 +18,7 @@ public class SI {
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version
-    private static byte channel = (byte)0; // channel 11 on IEEE 802.15.4
+    private static byte channel = (byte)4; // channel 11 on IEEE 802.15.4
     private static byte panid = 0x11;
     private static byte address = 0x11;
     
@@ -100,7 +100,13 @@ public class SI {
         
         killTimer.setAlarmBySpan(Time.toTickSpan(Time.SECONDS, demoLength)); // schedule the end of the cycle, after which nothing will be done
         
-       	Logger.appendString(csr.s2b("Starting demo in "));
+        Logger.appendString(csr.s2b("Channel, network, address "));
+        Logger.appendByte(channel);
+        Logger.appendString(csr.s2b(" "));
+        Logger.appendByte(panid);
+        Logger.appendString(csr.s2b(" "));
+        Logger.appendByte(address);
+       	Logger.appendString(csr.s2b(" Starting demo in "));
        	Logger.appendInt(5);
        	Logger.appendString(csr.s2b(" for "));
        	Logger.appendInt(demoLength);
@@ -157,6 +163,10 @@ public class SI {
     public static void periodicSend(byte param, long time) {
         
         if(nc > 0){
+        	Logger.appendString(csr.s2b("Sending sync frame "));
+        	Logger.appendInt(nc);
+        	Logger.flush(Mote.WARN);
+
 	        // transmit a beacon 
     	    radio.transmit(Device.ASAP|Radio.TXMODE_POWER_MAX, xmit, 0, 12, 0);
         	// program new alarm

@@ -24,12 +24,12 @@ public class Session {
 	private byte channel;
 	
 	/**
-	 * Duration of the session, in ticks
+	 * Duration of the session, in milliseconds
 	 */
 	private long duration;
 	
 	/**
-	 * Start of the session, in absolute ticks
+	 * Start of the session, in absolute milliseconds
 	 */
 	private long startTime;
 	
@@ -40,7 +40,7 @@ public class Session {
 	public Session(byte channel, long duration) {
 		this.channel = channel;
 		this.duration = duration;
-		this.startTime = Time.currentTicks();
+		this.startTime = Time.currentTime(Time.MILLISECS);
 	}
 	
 	/**
@@ -62,12 +62,5 @@ public class Session {
 	 */
 	public long getStartTime() {
 		return startTime;
-	}
-	
-	/**
-	 * @return calculated end time for the session, based on start time and duration
-	 */
-	public long getEndTime() {
-		return startTime + duration;
 	}
 }

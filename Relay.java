@@ -44,16 +44,17 @@ public class Relay {
      */
     private final static long TIMING_BUFFER_MS = 100L;
     private final static long CHANNEL_DURATION = 200L;	// Amount of time we want to ideally spend listening to a channel
+    private final static long CHANNEL_INDEFINITE_DURATION = -1L;
     
     /**
      * List of channels, higher priority channels are allowed 
      * to pre-empt the lower priority ones
      */
     private final static byte CHANNEL_OFF = (byte)-1;   // Use this to turn off the radio rx
-    private final static byte CHANNEL_SINK = (byte)0;
-    private final static byte CHANNEL_SOURCE_1 = (byte)1;
-    private final static byte CHANNEL_SOURCE_2 = (byte)2;
-    private final static byte CHANNEL_SOURCE_3 = (byte)3;
+    private final static byte CHANNEL_SINK = (byte)4;
+    private final static byte CHANNEL_SOURCE_1 = (byte)5;
+    private final static byte CHANNEL_SOURCE_2 = (byte)6;
+    private final static byte CHANNEL_SOURCE_3 = (byte)7;
     private final static int CHANNEL_COUNT = 4;
     
     /**
@@ -90,7 +91,7 @@ public class Relay {
      */
     private static Timer transmissionTimer = new Timer();
     
-    static Radio radio = new Radio();
+    private static Radio radio = new Radio();
     
     /**
      * Sync phases we have seen this far
@@ -112,10 +113,10 @@ public class Relay {
         // Configure the radio
         // Open the default radio
         radio.open(Radio.DID, null, 0, 0);
-        
+         
         // Keep the PAN ID as broadcast, this way we only have to change the channel
-        radio.setPanId(Radio.PAN_BROADCAST, false);
-        
+        radio.setPanId(0x11, false);
+
         // Rx callback
         radio.setRxHandler(new DevCallback(null) {
             public int invoke(int flags, byte[] data, int len, int info, long time) {
@@ -153,19 +154,12 @@ public class Relay {
         // Bottom of the session stack
         // This is the 'discovery' part for each channel
         // These sessions are never to be popped, unless by the channel itself
-        // when either sync completes or a frame is received
-        long longDuration = Time.toTickSpan(Time.SECONDS, 600);
-        long startTime = Time.currentTicks();
-        
-        Logger.appendString(csr.s2b("Long duration "));
-        Logger.appendLong(longDuration);
-        Logger.flush(Mote.WARN);
-        
-        sessionStack.push(new Session(CHANNEL_OFF, longDuration));
-        sessionStack.push(new Session(CHANNEL_SOURCE_3, longDuration));
-        sessionStack.push(new Session(CHANNEL_SOURCE_2, longDuration));
-        sessionStack.push(new Session(CHANNEL_SOURCE_1, longDuration));
-        Relay.pushSession(new Session(CHANNEL_SINK, longDuration));
+        // when either sync completes or a frame is received        
+        sessionStack.push(new Session(CHANNEL_OFF, CHANNEL_INDEFINITE_DURATION));
+        sessionStack.push(new Session(CHANNEL_SOURCE_3, CHANNEL_INDEFINITE_DURATION));
+        sessionStack.push(new Session(CHANNEL_SOURCE_2, CHANNEL_INDEFINITE_DURATION));
+        sessionStack.push(new Session(CHANNEL_SOURCE_1, CHANNEL_INDEFINITE_DURATION));
+        Relay.pushSession(new Session(CHANNEL_SINK, CHANNEL_INDEFINITE_DURATION));
         
         // DEBUGGING        
         Logger.appendString(csr.s2b("Initialising estimate: n = "));
@@ -173,12 +167,8 @@ public class Relay {
         Logger.appendString(csr.s2b(" t = "));
         Logger.appendLong(estimatedSinkBeacon.getTime());
         Logger.flush(Mote.WARN);
-        
-        // Turn on the LEDs to signify that we are operational
-        LED.setState((byte)0, (byte)1);
-        LED.setState((byte)1, (byte)1);
-        LED.setState((byte)2, (byte)1);
     }
+    
     
     /**
      * Radio reception
@@ -221,7 +211,20 @@ public class Relay {
     private static void onSinkReceive(int flags, byte[] data, int len, int info, long time) {
         // SINK node, synch phase
         int n = (int)data[11];
+        
+        Logger.appendString(csr.s2b("Time "));
+        Logger.appendLong(time);
+        Logger.appendString(csr.s2b(" "));
+        Logger.appendLong(Time.fromTickSpan(Time.MILLISECS, time));
+        Logger.flush(Mote.WARN);
+        
+        // As we are getting least significant bits, mask the sign bit to zero
         long currentTime = Time.currentTime(Time.MILLISECS);
+        
+        Logger.appendString(csr.s2b("Current time (ms) "));
+        Logger.appendLong(currentTime);
+        Logger.flush(Mote.WARN);
+        
         long currentEstimate = estimatedSinkBeacon.getTime();
         
         // The estimated n is simply the highest n value we have seen thus far
@@ -232,13 +235,13 @@ public class Relay {
         // If this package is part of the same sequence (or likely to be part of the same sequence)
         if (n < latestSinkBeacon.getPayload()) {
             // Figure out the delta from the last beacon
-            long deltaT = currentTime - latestSinkBeacon.getTime();
+            int deltaT = (int)(currentTime - latestSinkBeacon.getTime());
             long packetT = deltaT / (latestSinkBeacon.getPayload() - n);
             
             if (currentEstimate >= Relay.BEACON_MIN_TIME && currentEstimate <= Relay.BEACON_MAX_TIME) {
                 // New time is a balanced avg of the existing time and the newest estimate
-                long predictedT = (packetT * 3) / 5 + (estimatedSinkBeacon.getTime() * 2) / 5;
-                estimatedSinkBeacon.setTime(predictedT);
+                //long predictedT = (packetT * 3) / 5 + (estimatedSinkBeacon.getTime() * 2) / 5;
+                estimatedSinkBeacon.setTime(packetT);
             } else {
                 // Likely second beacon frame we are seeing
                 estimatedSinkBeacon.setTime(packetT);
@@ -373,13 +376,21 @@ public class Relay {
     	// An empty stack should never occur (or at least the bottom items have such a long deadline that it is very unlikely to occur)
     	if (sessionStack.isEmpty())
 	    	return;
-	    	
+    	
 		Session poppedSession = sessionStack.pop();
 		
 		// Move to the previous channel, schedule the next pop (which might happen immediately)	    	
 		Session session = sessionStack.peek();
 		Relay.setChannel(session.getChannel());
-		popTimer.setAlarmTime(session.getEndTime());
+		
+		// Calculate the remaining time in the session
+		if (session.getDuration() != CHANNEL_INDEFINITE_DURATION) {
+			long span = session.getStartTime() + session.getDuration() - Time.currentTime(Time.MILLISECS);
+			if (span < 0)
+				span = 0;
+			
+			popTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, span));
+		}
     }
     
     /**
@@ -390,8 +401,12 @@ public class Relay {
 	    sessionStack.push(session);
 	    
 	    // Change the channel and schedule the end
-	    Relay.setChannel(session.getChannel());    
-	    popTimer.setAlarmTime(session.getEndTime());
+	    Relay.setChannel(session.getChannel());  
+	    
+    	// Schedule the end of the session if this is not an indefinite session
+	    if (session.getDuration() != CHANNEL_INDEFINITE_DURATION) {
+		    popTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, session.getDuration()));
+	    }
     }
     
     /**
@@ -405,11 +420,11 @@ public class Relay {
         int index = (int)param;
         Timer timer = channelTimers[index];
         timer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, channelPeriods[index]));
-		
+
         // Switch to the channel if we can
         byte currentChannel = Relay.getChannel();
         if (currentChannel >= param || currentChannel == CHANNEL_OFF) {
-        	Relay.pushSession(new Session(param, Time.toTickSpan(Time.MILLISECS, channelDurations[index])));
+        	Relay.pushSession(new Session(param, channelDurations[index]));
         }
     }
     
@@ -437,16 +452,25 @@ public class Relay {
 	    	    
     	if (radio.getState() == Device.S_RXEN) {
 	    	radio.stopRx();
+	    	
+	    	Logger.appendString(csr.s2b("Stopping Rx"));
+	    	Logger.flush(Mote.WARN);
     	}
 	    
         if (channel >= 0) {
+	    	Logger.appendString(csr.s2b("Set channel before "));
+	    	Logger.appendByte(radio.getChannel());
+        	Logger.appendString(csr.s2b(" radio state before "));
+	    	Logger.appendInt(radio.getState());
+        	
             radio.setChannel(channel);
-            radio.startRx(Device.ASAP, 0, Time.currentTicks()+0x7FFFFFFF);
+            radio.startRx(Device.ASAP, 0, Time.currentTicks() + 0x7FFFFFFF);
             
-            // DEBUGGING        
-            Logger.appendString(csr.s2b("Radio channel set "));
-            Logger.appendByte(radio.getChannel());
-            Logger.flush(Mote.WARN);
+	    	Logger.appendString(csr.s2b(" = channel "));
+	    	Logger.appendByte(radio.getChannel());
+	    	Logger.appendString(csr.s2b(" radio state "));
+	    	Logger.appendInt(radio.getState());
+	    	Logger.flush(Mote.WARN);
         }
     }
 }
