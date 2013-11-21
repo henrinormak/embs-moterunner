@@ -7,6 +7,7 @@ public class SI {
     private static Timer  tsend;
     private static Timer  tstart;
     private static Timer  treceive;
+    private static Timer  blinkTimer = new Timer();
     
     private static byte[] xmit;
     private static long   wait;
@@ -18,7 +19,7 @@ public class SI {
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version
-    private static byte channel = (byte)4; // channel 11 on IEEE 802.15.4
+    private static byte channel = (byte)0; // channel 11 on IEEE 802.15.4
     private static byte panid = 0x11;
     private static byte address = 0x11;
     
@@ -28,6 +29,7 @@ public class SI {
     // Counting correct packets
     private static int inPhasePackets = 0;
     private static int outPhasePackets = 0;
+	private static int receptionPhaseCount = 0;
 
     static {
         // Open the default radio
@@ -156,6 +158,8 @@ public class SI {
         Logger.appendInt(inPhasePackets);
         Logger.appendString(csr.s2b(", incorrect frames "));
         Logger.appendInt(outPhasePackets);
+        Logger.appendString(csr.s2b(". Total phases "));
+        Logger.appendInt(receptionPhaseCount);
         Logger.flush(Mote.WARN);
     }
 
@@ -163,10 +167,6 @@ public class SI {
     public static void periodicSend(byte param, long time) {
         
         if(nc > 0){
-        	Logger.appendString(csr.s2b("Sending sync frame "));
-        	Logger.appendInt(nc);
-        	Logger.flush(Mote.WARN);
-
 	        // transmit a beacon 
     	    radio.transmit(Device.ASAP|Radio.TXMODE_POWER_MAX, xmit, 0, 12, 0);
         	// program new alarm
@@ -188,6 +188,7 @@ public class SI {
 	    // start receiving for t
         SI.blinkLEDAtIndex(0, t);
 		receptionPhaseEnd = Time.currentTicks() + wait;
+		receptionPhaseCount++;
 	}
 
     // Called on a timer alarm, starts the protocol
@@ -203,7 +204,6 @@ public class SI {
     }
     
     public static void blinkLEDAtIndex(int index, int timeMS) {
-        Timer blinkTimer = new Timer();
         blinkTimer.setParam((byte)index);
         blinkTimer.setCallback(new TimerEvent(null){
             public void invoke(byte param, long time){

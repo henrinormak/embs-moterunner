@@ -14,7 +14,6 @@
  */
 
 package embs;
-
 import com.ibm.saguaro.system.*;
 
 public class Session {

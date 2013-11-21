@@ -23,6 +23,8 @@ package embs;
 
 import com.ibm.saguaro.system.*;
 import com.ibm.saguaro.logger.*;
+import embs.Frame;
+import embs.FrameBuffer;
 import embs.Session;
 import embs.SessionStack;
 
@@ -33,10 +35,11 @@ public class Relay {
 	 */
 	
 	/**
-	 * Bounds specified by the spec, used for sanity checking
+	 * Bounds specified by the spec
 	 */
-    private final static long BEACON_MIN_TIME = 500L;
-    private final static long BEACON_MAX_TIME = 1500L;
+    private final static long BEACON_MIN_TIME = Time.toTickSpan(Time.MILLISECS, 500L);
+    private final static long BEACON_MAX_TIME = Time.toTickSpan(Time.MILLISECS, 1500L);
+    private final static byte CHANNEL_START_PAN_ID = 0x11;
     
     /**
      * Timing constants, allowing some leeway in our calculations 
@@ -51,10 +54,10 @@ public class Relay {
      * to pre-empt the lower priority ones
      */
     private final static byte CHANNEL_OFF = (byte)-1;   // Use this to turn off the radio rx
-    private final static byte CHANNEL_SINK = (byte)4;
-    private final static byte CHANNEL_SOURCE_1 = (byte)5;
-    private final static byte CHANNEL_SOURCE_2 = (byte)6;
-    private final static byte CHANNEL_SOURCE_3 = (byte)7;
+    private final static byte CHANNEL_SINK = (byte)0;
+    private final static byte CHANNEL_SOURCE_1 = (byte)1;
+    private final static byte CHANNEL_SOURCE_2 = (byte)2;
+    private final static byte CHANNEL_SOURCE_3 = (byte)3;
     private final static int CHANNEL_COUNT = 4;
     
     /**
@@ -65,6 +68,12 @@ public class Relay {
     /**
      * Variables
      */
+     
+    private static Radio radio = new Radio();
+    private static int syncPhasesSeen = 0;
+    private static SessionStack sessionStack = new SessionStack(10);
+    private static Timer popTimer = new Timer(); // a timer we use to end sessions
+    private static FrameBuffer frameBuffer = new FrameBuffer(5);
     
     /**
      * Timing variables
@@ -76,51 +85,46 @@ public class Relay {
     private final static Timer[] channelTimers = new Timer[]{new Timer(), new Timer(), new Timer(), new Timer()};
     
     /**
-     * Session management
-     * The bottom of the stack is for the "discovery" of
-     * channels, this is the time where we aim to determine
-     * the exact timing for each channel
-     */
-    private static SessionStack sessionStack = new SessionStack(10);
-    private static Timer popTimer = new Timer(); // a timer we use to end sessions
-    
-    /**
      * Transmissions are scheduled independant of the channel switching
      * however, it does depend on CHANNEL_SINK being triggered before,
      * which ideally should happen with a TIMING_BUFFER_MS to spare
      */
     private static Timer transmissionTimer = new Timer();
-    
-    private static Radio radio = new Radio();
+    private static long transmissionDeadline = 0;
+    private static byte[] transmissionFrame = new byte[12];
     
     /**
-     * Sync phases we have seen this far
-     */
-    private static int syncPhasesSeen = 0;
-
-    /**
-     * Sync info from the sink, store the last beacon and the estimation
+     * Sync info from the sink, store the last frame and the estimation
      * for the properties of the sink
      */
-    private static Beacon latestSinkBeacon = new Beacon(0, 0);
+    private static Frame latestSinkFrame = new Frame((byte)0, (byte)0, 0, 0);
     /**
      * Initialise the estimate to be invalid, our logic trusts the estimate as long as it is in within given spec range
      * thus it will become trusted after a few sync frames have been received and will be affirmed by future frames
      */
-    private static Beacon estimatedSinkBeacon = new Beacon(0, 0);
+    private static Frame estimatedSinkFrame = new Frame((byte)0, (byte)0, 0, 0);
         
     static {
+    	// Pretune the transmission frame we use, payload and addressing are figure out when sending
+		// this allows some flexibility when it comes to source addresses and the sink address
+    	transmissionFrame[0] = Radio.FCF_BEACON;
+    	transmissionFrame[1] = Radio.FCA_SRC_SADDR|Radio.FCA_DST_SADDR;
+
         // Configure the radio
         // Open the default radio
         radio.open(Radio.DID, null, 0, 0);
-         
-        // Keep the PAN ID as broadcast, this way we only have to change the channel
-        radio.setPanId(0x11, false);
+        radio.setShortAddr(Radio.SADDR_BROADCAST);
 
         // Rx callback
         radio.setRxHandler(new DevCallback(null) {
             public int invoke(int flags, byte[] data, int len, int info, long time) {
                 return Relay.onReceive(flags, data, len, info, time);
+            }
+        });
+        
+        radio.setTxHandler(new DevCallback(null) {
+            public int invoke(int flags, byte[] data, int len, int info, long time) {
+                return Relay.onTransmit(flags, data, len, info, time);
             }
         });
                 
@@ -163,15 +167,15 @@ public class Relay {
         
         // DEBUGGING        
         Logger.appendString(csr.s2b("Initialising estimate: n = "));
-        Logger.appendInt(estimatedSinkBeacon.getPayload());
+        Logger.appendInt(estimatedSinkFrame.getPayload());
         Logger.appendString(csr.s2b(" t = "));
-        Logger.appendLong(estimatedSinkBeacon.getTime());
+        Logger.appendLong(estimatedSinkFrame.getTime());
         Logger.flush(Mote.WARN);
     }
     
     
     /**
-     * Radio reception
+     * Radio callbacks
      */
     
     /**
@@ -186,10 +190,7 @@ public class Relay {
     private static int onReceive(int flags, byte[] data, int len, int info, long time) {
     	if (data == null)
     		return 0;
-    	
-    	Logger.appendString(csr.s2b("Data received"));
-    	Logger.flush(Mote.WARN);
-    	
+    	    	
         byte channel = Relay.getChannel();
         if (channel == CHANNEL_SINK) {
             Relay.onSinkReceive(flags, data, len, info, time);
@@ -210,87 +211,81 @@ public class Relay {
      */
     private static void onSinkReceive(int flags, byte[] data, int len, int info, long time) {
         // SINK node, synch phase
-        int n = (int)data[11];
+        // Read out the values from the data
+        byte fca = data[1];
+        int srcPanID = 0;
+        int srcAddr = 0;
+        int payload = 0;
         
-        Logger.appendString(csr.s2b("Time "));
-        Logger.appendLong(time);
-        Logger.appendString(csr.s2b(" "));
-        Logger.appendLong(Time.fromTickSpan(Time.MILLISECS, time));
-        Logger.flush(Mote.WARN);
-        
-        // As we are getting least significant bits, mask the sign bit to zero
-        long currentTime = Time.currentTime(Time.MILLISECS);
-        
-        Logger.appendString(csr.s2b("Current time (ms) "));
-        Logger.appendLong(currentTime);
-        Logger.flush(Mote.WARN);
-        
-        long currentEstimate = estimatedSinkBeacon.getTime();
+        if ((fca & Radio.FCA_DST_SADDR) == Radio.FCA_DST_SADDR) {
+	        srcPanID = Util.get16le(data, 7);
+	        srcAddr = Util.get16le(data, 9);
+	        payload = (int)data[11];
+        } else {
+	        srcPanID = Util.get16le(data, 3);
+	        srcAddr = Util.get16le(data, 5);
+	        payload = (int)data[7];
+        }   
         
         // The estimated n is simply the highest n value we have seen thus far
-        if (n > estimatedSinkBeacon.getPayload()) {
-            estimatedSinkBeacon.setPayload(n);
+        if (payload > estimatedSinkFrame.getPayload()) {
+            estimatedSinkFrame.setPayload(payload);
         }
         
+        // The source address and PAN ID are the latest we have seen, so always update
+        estimatedSinkFrame.setPanID(srcPanID);
+        estimatedSinkFrame.setAddress(srcAddr);
+        
         // If this package is part of the same sequence (or likely to be part of the same sequence)
-        if (n < latestSinkBeacon.getPayload()) {
-            // Figure out the delta from the last beacon
-            int deltaT = (int)(currentTime - latestSinkBeacon.getTime());
-            long packetT = deltaT / (latestSinkBeacon.getPayload() - n);
+        if (payload < latestSinkFrame.getPayload()) {
+            // Figure out the delta from the last frame
+            long currentEstimate = estimatedSinkFrame.getTime();
+            long deltaT = time - latestSinkFrame.getTime();
+            long packetT = deltaT / (latestSinkFrame.getPayload() - payload);
             
-            if (currentEstimate >= Relay.BEACON_MIN_TIME && currentEstimate <= Relay.BEACON_MAX_TIME) {
-                // New time is a balanced avg of the existing time and the newest estimate
-                //long predictedT = (packetT * 3) / 5 + (estimatedSinkBeacon.getTime() * 2) / 5;
-                estimatedSinkBeacon.setTime(packetT);
-            } else {
-                // Likely second beacon frame we are seeing
-                estimatedSinkBeacon.setTime(packetT);
-            }
+            // Store the new estimated time
+            estimatedSinkFrame.setTime(packetT);
         } else {
+        	// We have begun a new sync phase, so there is nothing we can update
             syncPhasesSeen = syncPhasesSeen + 1;
         }
         
-        if (n == 1) {
+        if (payload == 1) {
             // Last frame of the sync phase, start transmitting (if our estimate is trustworthy)
             // Also schedule the next sync phase if we have not seen enough sync phases
-            currentEstimate = estimatedSinkBeacon.getTime();
+            long currentEstimate = estimatedSinkFrame.getTime();
             
             if (currentEstimate >= Relay.BEACON_MIN_TIME && currentEstimate <= Relay.BEACON_MAX_TIME) {
                 Timer sinkTimer = channelTimers[CHANNEL_SINK];
                 
                 // Update the period we predict for the sink
                 // 6 = 1 reception + 5 sleep
-                channelPeriods[CHANNEL_SINK] = currentEstimate * (6 + estimatedSinkBeacon.getPayload());
+                channelPeriods[CHANNEL_SINK] = Time.fromTickSpan(Time.MILLISECS, currentEstimate * (6 + estimatedSinkFrame.getPayload()));
 				
 				// Calculate the duration of the channel and the next time we have to open it
                 long timeTilNext = channelPeriods[CHANNEL_SINK];
                 long duration = currentEstimate;
                 if (syncPhasesSeen < SYNC_PHASES_REQUIRED) {
 					timeTilNext = currentEstimate * 6;
-					duration += currentEstimate * estimatedSinkBeacon.getPayload();
+					duration += currentEstimate * estimatedSinkFrame.getPayload();
 				}
 				                
-                sinkTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, timeTilNext));
-                channelDurations[CHANNEL_SINK] = duration;
+                sinkTimer.setAlarmBySpan(timeTilNext);
+                channelDurations[CHANNEL_SINK] = Time.fromTickSpan(Time.MILLISECS, duration);
 
                 // Start transmitting in t (as this is the last n)
-                transmissionTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, currentEstimate));
+                transmissionTimer.setAlarmBySpan(currentEstimate);
                 
                 // Re-schedule the session end (in case our estimates improved or in case this was the first sync)
-                popTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, 2 * currentEstimate));
+                popTimer.setAlarmBySpan(2 * currentEstimate);
             }
         }
-        
-        // DEBUGGING        
-        Logger.appendString(csr.s2b("Sync frame received, updated estimate: n = "));
-        Logger.appendInt(estimatedSinkBeacon.getPayload());
-        Logger.appendString(csr.s2b(" t = "));
-        Logger.appendLong(estimatedSinkBeacon.getTime());
-        Logger.flush(Mote.WARN);
-                
-        // Move the latest beacon up
-        latestSinkBeacon.setTime(currentTime);
-        latestSinkBeacon.setPayload(n);
+                        
+        // Update the latest frame reference
+        latestSinkFrame.setPanID(srcPanID);
+        latestSinkFrame.setAddress(srcAddr);
+        latestSinkFrame.setTime(time);
+        latestSinkFrame.setPayload(payload);
     }
     
     /**
@@ -315,10 +310,37 @@ public class Relay {
 		Timer timer = channelTimers[index];
 		timer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, channelPeriods[index] - TIMING_BUFFER_MS));
 		
-		// TODO: Store the frame for transmission
+		// Read out the values from the data
+        byte fca = data[1];
+        int srcPanID = 0;
+        int srcAddr = 0;
+        int payload = 0;
+        
+        if ((fca & Radio.FCA_DST_SADDR) == Radio.FCA_DST_SADDR) {
+	        srcPanID = Util.get16le(data, 7);
+	        srcAddr = Util.get16le(data, 9);
+	        payload = (int)data[11];
+        } else {
+	        srcPanID = Util.get16le(data, 3);
+	        srcAddr = Util.get16le(data, 5);
+	        payload = (int)data[7];
+        }
+        
+        Frame frame = new Frame(srcPanID, srcAddr, payload, time);
+        frameBuffer.push(frame);
 		
 		// Terminate the session immediately
 		popTimer.setAlarmBySpan(0);
+    }
+    
+    private static int onTransmit(int flags, byte[] data, int len, int info, long time) {
+    	// Check if we still have time to send more
+    	if (Time.currentTicks() < transmissionDeadline) {
+	    	// Schedule another send
+	    	Relay.transmitFromBuffer();
+    	}
+    	
+    	return 0;
     }
     
     
@@ -333,7 +355,31 @@ public class Relay {
      */
     private static void onScheduleTransmit(byte param, long time) {
         transmissionTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, channelPeriods[CHANNEL_SINK]));
-        Relay.transmitBySpan(Time.toTickSpan(Time.MILLISECS, estimatedSinkBeacon.getTime() - TIMING_BUFFER_MS));
+        transmissionDeadline = Time.currentTicks() + estimatedSinkFrame.getTime() - Time.toTickSpan(Time.MILLISECS, TIMING_BUFFER_MS); 
+		
+		// Transmit from buffer, the Tx handler takes care of continuing transmission for as long as possible
+        Relay.transmitFromBuffer();
+    }
+    
+    private static void transmitFromBuffer() {
+	    // If buffer has been emptied, then bail and take the channel with us
+/*
+	    if (frameBuffer.isEmpty()) {
+	        popTimer.setAlarmBySpan(0);
+	        return;
+        }
+*/
+        
+	    //Frame nextFrame = frameBuffer.pull();
+		
+		// Tx handler will take care of the recursion (i.e sending more frames than 1)
+		Util.set16le(transmissionFrame, 3, estimatedSinkFrame.getPanID());
+		Util.set16le(transmissionFrame, 5, estimatedSinkFrame.getAddress());
+		Util.set16le(transmissionFrame, 7, 0x11);
+		Util.set16le(transmissionFrame, 9, 0x11);
+		transmissionFrame[11] = (byte)0;//nextFrame.getPayload();
+		
+		radio.transmit(Device.ASAP|Radio.TXMODE_POWER_MAX, transmissionFrame, 0, 12, 0);
     }
     
     /**
@@ -452,25 +498,12 @@ public class Relay {
 	    	    
     	if (radio.getState() == Device.S_RXEN) {
 	    	radio.stopRx();
-	    	
-	    	Logger.appendString(csr.s2b("Stopping Rx"));
-	    	Logger.flush(Mote.WARN);
     	}
 	    
-        if (channel >= 0) {
-	    	Logger.appendString(csr.s2b("Set channel before "));
-	    	Logger.appendByte(radio.getChannel());
-        	Logger.appendString(csr.s2b(" radio state before "));
-	    	Logger.appendInt(radio.getState());
-        	
+        if (channel >= 0) {        	
             radio.setChannel(channel);
+            radio.setPanId(CHANNEL_START_PAN_ID + channel, false);
             radio.startRx(Device.ASAP, 0, Time.currentTicks() + 0x7FFFFFFF);
-            
-	    	Logger.appendString(csr.s2b(" = channel "));
-	    	Logger.appendByte(radio.getChannel());
-	    	Logger.appendString(csr.s2b(" radio state "));
-	    	Logger.appendInt(radio.getState());
-	    	Logger.flush(Mote.WARN);
         }
     }
 }
