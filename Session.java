@@ -23,12 +23,12 @@ public class Session {
 	private byte channel;
 	
 	/**
-	 * Duration of the session, in milliseconds
+	 * Duration of the session, in ticks
 	 */
 	private long duration;
 	
 	/**
-	 * Start of the session, in absolute milliseconds
+	 * Start of the session, in ticks
 	 */
 	private long startTime;
 	
@@ -39,7 +39,7 @@ public class Session {
 	public Session(byte channel, long duration) {
 		this.channel = channel;
 		this.duration = duration;
-		this.startTime = Time.currentTime(Time.MILLISECS);
+		this.startTime = Time.currentTicks();
 	}
 	
 	/**
@@ -57,7 +57,7 @@ public class Session {
 	}
 		
 	/**
-	 * @return start time of this session, which is set automatically in the constructor
+	 * @return start time of this session, which is set automatically in the constructor, in ticks
 	 */
 	public long getStartTime() {
 		return startTime;

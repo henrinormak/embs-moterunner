@@ -6,13 +6,7 @@
  * The main relay class, responsible for scanning the sources
  * and forwarding frames on to the sink
  * 
- * For future reference, changing the number of channels would have to involve adding
- * some new constants and changing the value of CHANNEL_COUNT
- * 
- * It might also involve adding some more timers and components to arrays
- * channelPeriods and channelDurations
- * 
- * The scheduling works based on a simple priority setting, the lower the channel
+ * The scheduling is based on a simple priority system, the lower the channel
  * number, the higher the priority. The relay starts by syncing with the sink
  * it then "discovers" channels in the order of their priority after which
  * the timing is handled by the timers and the predefined periods
@@ -29,7 +23,6 @@ import embs.Session;
 import embs.SessionStack;
 
 public class Relay {
-	
 	/**
 	 * Constants
 	 */
@@ -39,14 +32,15 @@ public class Relay {
 	 */
     private final static long BEACON_MIN_TIME = Time.toTickSpan(Time.MILLISECS, 500L);
     private final static long BEACON_MAX_TIME = Time.toTickSpan(Time.MILLISECS, 1500L);
+    private final static long RX_MAX_TIME = Time.toTickSpan(Time.SECONDS, 60L);
     private final static byte CHANNEL_START_PAN_ID = 0x11;
     
     /**
      * Timing constants, allowing some leeway in our calculations 
      * and helping with clock drift
      */
-    private final static long TIMING_BUFFER_MS = 100L;
-    private final static long CHANNEL_DURATION = 200L;	// Amount of time we want to ideally spend listening to a channel
+    private final static long TIMING_BUFFER = Time.toTickSpan(Time.MILLISECS, 100L);
+    private final static long CHANNEL_DURATION = Time.toTickSpan(Time.MILLISECS, 200L);	// Amount of time we want to ideally spend listening to a channel
     private final static long CHANNEL_INDEFINITE_DURATION = -1L;
     
     /**
@@ -64,7 +58,7 @@ public class Relay {
     /**
      * Sync phases we require the system to look at, after these only the transmission phase is scheduled
      */
-    private final static int SYNC_PHASES_REQUIRED = 2;
+    private final static int SYNC_PHASES_REQUIRED = 1;
     
     /**
      * Variables
@@ -87,8 +81,8 @@ public class Relay {
      * Keep a timer for each channel that is responsible
      *  for trying to switch the system to that channel 
      */
-    private final static long[] channelPeriods = new long[]{4000L /* adjusted after sync */, 5500L, 6900L, 8100L};
-    private final static long[] channelDurations = new long[]{1500L /* adjusted after sync */, CHANNEL_DURATION, CHANNEL_DURATION, CHANNEL_DURATION};
+    private final static long[] channelPeriods = new long[]{Time.toTickSpan(Time.MILLISECS, 4000L) /* adjusted after sync */, Time.toTickSpan(Time.MILLISECS, 5500L), Time.toTickSpan(Time.MILLISECS, 6900L), Time.toTickSpan(Time.MILLISECS, 8100L)};
+    private final static long[] channelDurations = new long[]{Time.toTickSpan(Time.MILLISECS, 1500L) /* adjusted after sync */, CHANNEL_DURATION, CHANNEL_DURATION, CHANNEL_DURATION};
     private final static Timer[] channelTimers = new Timer[]{new Timer(), new Timer(), new Timer(), new Timer()};
     
     /**
@@ -121,6 +115,7 @@ public class Relay {
         // Open the default radio
         radio.open(Radio.DID, null, 0, 0);
         radio.setShortAddr(Radio.SADDR_BROADCAST);
+        radio.setRxMode(Radio.RXMODE_NORMAL);
 
         // Rx callback
         radio.setRxHandler(new DevCallback(null) {
@@ -178,7 +173,7 @@ public class Relay {
         Logger.appendString(csr.s2b(" t = "));
         Logger.appendLong(estimatedSinkFrame.getTime());
         Logger.flush(Mote.WARN);
-        
+                
         Logger.appendString(csr.s2b("Radio setup - state "));
         Logger.appendInt(radio.getState());
         Logger.appendString(csr.s2b(" pan "));
@@ -204,19 +199,9 @@ public class Relay {
      */
     private static int onReceive(int flags, byte[] data, int len, int info, long time) {
     	if (data == null) {
-    		// The radio is now off, mark it so
-            channel = CHANNEL_OFF;
-            
-            // Switch to the next channel
-            Relay.setChannel(pendingChannel);
-            
     		return 0;
     	}
-    	
-    	// Determine the source channel for this packet        
-        Logger.appendString(csr.s2b("Received frame from channel "));
-        Logger.appendInt(channel);
-    	
+    	    	
         if (channel == CHANNEL_SINK) {
             Relay.onSinkReceive(flags, data, len, info, time);
         } else if (channel == CHANNEL_SOURCE_1 || channel == CHANNEL_SOURCE_2 || channel == CHANNEL_SOURCE_3) {
@@ -250,7 +235,7 @@ public class Relay {
 	        srcPanID = Util.get16le(data, 3);
 	        srcAddr = Util.get16le(data, 5);
 	        payload = (int)data[7];
-        }   
+        }
         
         // The estimated n is simply the highest n value we have seen thus far
         if (payload > estimatedSinkFrame.getPayload()) {
@@ -288,18 +273,18 @@ public class Relay {
                 long period = currentEstimate * (6 + estimatedSinkFrame.getPayload());
 				
 				// Calculate the duration of the channel and the next time we have to open it
-                long timeTilNext = period + currentEstimate - Time.toTickSpan(Time.MILLISECS, TIMING_BUFFER_MS);
+                long timeTilNext = period + currentEstimate - TIMING_BUFFER;
                 long duration = currentEstimate;
                 if (syncPhasesSeen < SYNC_PHASES_REQUIRED) {
-					timeTilNext = currentEstimate * 7 - Time.toTickSpan(Time.MILLISECS, TIMING_BUFFER_MS);
+					timeTilNext = currentEstimate * 7 - TIMING_BUFFER;
 					duration += currentEstimate * estimatedSinkFrame.getPayload();
 				}
 				
-				channelPeriods[CHANNEL_SINK] = Time.fromTickSpan(Time.MILLISECS, period);
-				channelDurations[CHANNEL_SINK] = Time.fromTickSpan(Time.MILLISECS, duration);
+				channelPeriods[CHANNEL_SINK] = period;
+				channelDurations[CHANNEL_SINK] = duration;
 				
 				Logger.appendString(csr.s2b("Update sink period "));
-				Logger.appendLong(channelPeriods[CHANNEL_SINK]);
+				Logger.appendLong(Time.fromTickSpan(Time.MILLISECS, period));
 				Logger.appendString(csr.s2b(" estimate "));
 				Logger.appendLong(Time.fromTickSpan(Time.MILLISECS, currentEstimate));
 				Logger.flush(Mote.WARN);
@@ -338,23 +323,12 @@ public class Relay {
 	    
 		// We can immediately reschedule the timer as well (as we don't know for how long we have been listening to this channel)
 		Timer timer = channelTimers[index];
-		timer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, channelPeriods[index] - TIMING_BUFFER_MS));
+		timer.setAlarmBySpan(channelPeriods[index] - TIMING_BUFFER);
 		
 		// Read out the values from the data
-        byte fca = data[1];
-        int srcPanID = 0;
-        int srcAddr = 0;
-        int payload = 0;
-        
-        if ((fca & Radio.FCA_DST_SADDR) == Radio.FCA_DST_SADDR) {
-	        srcPanID = Util.get16le(data, 7);
-	        srcAddr = Util.get16le(data, 9);
-	        payload = (int)data[11];
-        } else {
-	        srcPanID = Util.get16le(data, 3);
-	        srcAddr = Util.get16le(data, 5);
-	        payload = (int)data[7];
-        }
+        int srcPanID = Util.get16le(data, 7);
+        int srcAddr = Util.get16le(data, 9);
+        int payload = (int)data[11];
         
     	// DEBUGGING
     	Logger.appendString(csr.s2b("Received a frame "));
@@ -373,11 +347,7 @@ public class Relay {
     }
     
     private static int onTransmit(int flags, byte[] data, int len, int info, long time) {    	
-    	// Check if we still have time to send more
-    	Logger.appendString(csr.s2b("Frame sent - channel "));
-    	Logger.appendInt(radio.getChannel());
-    	Logger.flush(Mote.WARN);
-    	
+    	// Check if we still have time to send more    	
     	if (Time.currentTicks() < transmissionDeadline) {
 	    	// Schedule another send
 	    	Relay.transmitFromBuffer();
@@ -397,8 +367,8 @@ public class Relay {
      * @param time
      */
     private static void onScheduleTransmit(byte param, long time) {
-        transmissionTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, channelPeriods[CHANNEL_SINK]));
-        transmissionDeadline = Time.currentTicks() + estimatedSinkFrame.getTime() - Time.toTickSpan(Time.MILLISECS, TIMING_BUFFER_MS); 
+        transmissionTimer.setAlarmBySpan(channelPeriods[CHANNEL_SINK]);
+        transmissionDeadline = Time.currentTicks() + estimatedSinkFrame.getTime() - TIMING_BUFFER; 
         
 		// Transmit from buffer, the Tx handler takes care of continuing transmission for as long as possible
         Relay.transmitFromBuffer();
@@ -419,7 +389,7 @@ public class Relay {
 		Util.set16le(transmissionFrame, 7, (byte)nextFrame.getPanID());
 		Util.set16le(transmissionFrame, 9, (byte)nextFrame.getAddress());
 		transmissionFrame[11] = (byte)nextFrame.getPayload();
-		
+				
 		radio.transmit(Device.ASAP|Radio.TXMODE_POWER_MAX, transmissionFrame, 0, 12, 0);
     }
         
@@ -450,11 +420,7 @@ public class Relay {
 		
 		// Calculate the remaining time in the session
 		if (session.getDuration() != CHANNEL_INDEFINITE_DURATION) {
-			long span = session.getStartTime() + session.getDuration() - Time.currentTime(Time.MILLISECS);
-			if (span < 0)
-				span = 0;
-			
-			popTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, span));
+			popTimer.setAlarmTime(session.getStartTime() + session.getDuration());
 		}
     }
     
@@ -470,7 +436,7 @@ public class Relay {
 	    
     	// Schedule the end of the session if this is not an indefinite session
 	    if (session.getDuration() != CHANNEL_INDEFINITE_DURATION) {
-		    popTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, session.getDuration()));
+		    popTimer.setAlarmBySpan(session.getDuration());
 	    }
     }
     
@@ -484,7 +450,7 @@ public class Relay {
         // one communication from the channel represented by this timer
         int index = (int)param;
         Timer timer = channelTimers[index];
-        timer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, channelPeriods[index]));
+        timer.setAlarmBySpan(channelPeriods[index]);
         
         // Switch to the channel if we can
         byte currentChannel = Relay.getChannel();
@@ -511,27 +477,19 @@ public class Relay {
     private static void setChannel(byte nextChannel) {    	
     	if (Relay.getChannel() == nextChannel)
     		return;
-    	
-    	Logger.appendString(csr.s2b("Setting channel"));
-    	Logger.flush(Mote.WARN);
-    	
+    	    	
     	if (channel != CHANNEL_OFF) {
-    		// Mark the channel change as pending and wait for the rx handler to get the end signal
-    		pendingChannel = nextChannel;
+    		// Stop the radio first
     		radio.stopRx();
-    	} else {
-    		pendingChannel = CHANNEL_OFF;
-        	channel = nextChannel;
-        	
-        	// Tune the radio and start it
-        	if (nextChannel != CHANNEL_OFF) {
-                radio.setPanId((CHANNEL_START_PAN_ID + nextChannel), false);
-                radio.setChannel((byte)(nextChannel + CHANNEL_OFFSET));
-                radio.startRx(Device.ASAP, 0, Time.currentTicks()+0x7FFFFFFF);
-                
-            	Logger.appendString(csr.s2b("Channel set"));
-            	Logger.flush(Mote.WARN);
-        	}
+    	}
+    	
+    	channel = nextChannel;
+    	
+    	// Tune the radio and start it, if it was not meant to stay off
+    	if (nextChannel != CHANNEL_OFF) {
+            radio.setChannel((byte)(nextChannel + CHANNEL_OFFSET));
+            radio.setPanId((CHANNEL_START_PAN_ID + nextChannel), false);
+            radio.startRx(Device.ASAP, 0, Time.currentTicks()+RX_MAX_TIME);
     	}
     }
 }
