@@ -59,11 +59,12 @@ public class Relay {
     private final static byte CHANNEL_SOURCE_2 = (byte)2;
     private final static byte CHANNEL_SOURCE_3 = (byte)3;
     private final static int CHANNEL_COUNT = 4;
+    private final static byte CHANNEL_OFFSET = (byte)4;
     
     /**
      * Sync phases we require the system to look at, after these only the transmission phase is scheduled
      */
-    private final static int SYNC_PHASES_REQUIRED = 1;
+    private final static int SYNC_PHASES_REQUIRED = 2;
     
     /**
      * Variables
@@ -74,6 +75,12 @@ public class Relay {
     private static SessionStack sessionStack = new SessionStack(10);
     private static Timer popTimer = new Timer(); // a timer we use to end sessions
     private static FrameBuffer frameBuffer = new FrameBuffer(5);
+    
+    /**
+     * Keeping track of channel and switching it
+     */
+    private static byte channel = CHANNEL_OFF;
+    private static byte pendingChannel = CHANNEL_OFF;
     
     /**
      * Timing variables
@@ -171,6 +178,14 @@ public class Relay {
         Logger.appendString(csr.s2b(" t = "));
         Logger.appendLong(estimatedSinkFrame.getTime());
         Logger.flush(Mote.WARN);
+        
+        Logger.appendString(csr.s2b("Radio setup - state "));
+        Logger.appendInt(radio.getState());
+        Logger.appendString(csr.s2b(" pan "));
+        Logger.appendInt(radio.getPanId());
+        Logger.appendString(csr.s2b(" channel "));
+        Logger.appendByte(radio.getChannel());
+        Logger.flush(Mote.WARN);
     }
     
     
@@ -188,10 +203,20 @@ public class Relay {
      * @return status
      */
     private static int onReceive(int flags, byte[] data, int len, int info, long time) {
-    	if (data == null)
+    	if (data == null) {
+    		// The radio is now off, mark it so
+            channel = CHANNEL_OFF;
+            
+            // Switch to the next channel
+            Relay.setChannel(pendingChannel);
+            
     		return 0;
-    	    	
-        byte channel = Relay.getChannel();
+    	}
+    	
+    	// Determine the source channel for this packet        
+        Logger.appendString(csr.s2b("Received frame from channel "));
+        Logger.appendInt(channel);
+    	
         if (channel == CHANNEL_SINK) {
             Relay.onSinkReceive(flags, data, len, info, time);
         } else if (channel == CHANNEL_SOURCE_1 || channel == CHANNEL_SOURCE_2 || channel == CHANNEL_SOURCE_3) {
@@ -275,8 +300,10 @@ public class Relay {
 				
 				Logger.appendString(csr.s2b("Update sink period "));
 				Logger.appendLong(channelPeriods[CHANNEL_SINK]);
+				Logger.appendString(csr.s2b(" estimate "));
+				Logger.appendLong(Time.fromTickSpan(Time.MILLISECS, currentEstimate));
 				Logger.flush(Mote.WARN);
-				
+								
                 sinkTimer.setAlarmBySpan(timeTilNext);
 
                 // Start transmitting in t (as this is the last n)
@@ -308,7 +335,7 @@ public class Relay {
     	// Cheat a bit and use the channel of our radio
     	// it would be more correct to read it out of 'data'
 	    int index = (int)Relay.getChannel();
-		
+	    
 		// We can immediately reschedule the timer as well (as we don't know for how long we have been listening to this channel)
 		Timer timer = channelTimers[index];
 		timer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, channelPeriods[index] - TIMING_BUFFER_MS));
@@ -329,6 +356,15 @@ public class Relay {
 	        payload = (int)data[7];
         }
         
+    	// DEBUGGING
+    	Logger.appendString(csr.s2b("Received a frame "));
+    	Logger.appendInt(srcPanID);
+    	Logger.appendString(csr.s2b(" "));
+    	Logger.appendByte(radio.getChannel());
+    	Logger.appendString(csr.s2b(" payload "));
+    	Logger.appendInt(payload);
+    	Logger.flush(Mote.WARN);
+    	        
         Frame frame = new Frame(srcPanID, srcAddr, payload, time);
         frameBuffer.push(frame);
 		
@@ -336,8 +372,12 @@ public class Relay {
 		popTimer.setAlarmBySpan(0);
     }
     
-    private static int onTransmit(int flags, byte[] data, int len, int info, long time) {
+    private static int onTransmit(int flags, byte[] data, int len, int info, long time) {    	
     	// Check if we still have time to send more
+    	Logger.appendString(csr.s2b("Frame sent - channel "));
+    	Logger.appendInt(radio.getChannel());
+    	Logger.flush(Mote.WARN);
+    	
     	if (Time.currentTicks() < transmissionDeadline) {
 	    	// Schedule another send
 	    	Relay.transmitFromBuffer();
@@ -359,7 +399,7 @@ public class Relay {
     private static void onScheduleTransmit(byte param, long time) {
         transmissionTimer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, channelPeriods[CHANNEL_SINK]));
         transmissionDeadline = Time.currentTicks() + estimatedSinkFrame.getTime() - Time.toTickSpan(Time.MILLISECS, TIMING_BUFFER_MS); 
-		
+        
 		// Transmit from buffer, the Tx handler takes care of continuing transmission for as long as possible
         Relay.transmitFromBuffer();
     }
@@ -372,13 +412,13 @@ public class Relay {
         }
         
 	    Frame nextFrame = frameBuffer.pull();
-		
+	    
 		// Tx handler will take care of the recursion (i.e sending more frames than 1)
 		Util.set16le(transmissionFrame, 3, estimatedSinkFrame.getPanID());
 		Util.set16le(transmissionFrame, 5, estimatedSinkFrame.getAddress());
-		Util.set16le(transmissionFrame, 7, 0x11);
-		Util.set16le(transmissionFrame, 9, 0x11);
-		transmissionFrame[11] = (byte)0;//nextFrame.getPayload();
+		Util.set16le(transmissionFrame, 7, (byte)nextFrame.getPanID());
+		Util.set16le(transmissionFrame, 9, (byte)nextFrame.getAddress());
+		transmissionFrame[11] = (byte)nextFrame.getPayload();
 		
 		radio.transmit(Device.ASAP|Radio.TXMODE_POWER_MAX, transmissionFrame, 0, 12, 0);
     }
@@ -394,11 +434,15 @@ public class Relay {
      * @param time
      */
     private static void popSession(byte param, long time) {
-    	// An empty stack should never occur (or at least the bottom items have such a long deadline that it is very unlikely to occur)
+    	// An empty stack should never occur, but just in case, check for it
     	if (sessionStack.isEmpty())
 	    	return;
     	
 		Session poppedSession = sessionStack.pop();
+		
+		// An empty stack should never occur, but just in case, check for it
+    	if (sessionStack.isEmpty())
+	    	return;
 		
 		// Move to the previous channel, schedule the next pop (which might happen immediately)	    	
 		Session session = sessionStack.peek();
@@ -441,7 +485,7 @@ public class Relay {
         int index = (int)param;
         Timer timer = channelTimers[index];
         timer.setAlarmBySpan(Time.toTickSpan(Time.MILLISECS, channelPeriods[index]));
-
+        
         // Switch to the channel if we can
         byte currentChannel = Relay.getChannel();
         if (currentChannel >= param || currentChannel == CHANNEL_OFF) {
@@ -450,35 +494,44 @@ public class Relay {
     }
     
     /**
-     * Current channel
+     * Channel management
      */
     
     /**
-     * @return the current channel of the radio or CHANNEL_OFF if radio is not receiving
+     * @return the current channel of the radio or CHANNEL_OFF if radio is in standby (i.e rx is off)
      */
     private static byte getChannel() {
-        if (radio.getState() == Device.S_RXEN)
-            return radio.getChannel();
-        else
-            return CHANNEL_OFF;
+    	return channel;
     }
     
     /**
      * Setting a new channel, stops Rx, switches channel and the restarts Rx
-     * @param channel	new channel to switch to
+     * @param nextChannel	new channel to switch to
      */
-    private static void setChannel(byte channel) {
-    	if (Relay.getChannel() == channel)
-	    	return;
-	    	    
-    	if (radio.getState() == Device.S_RXEN) {
-	    	radio.stopRx();
+    private static void setChannel(byte nextChannel) {    	
+    	if (Relay.getChannel() == nextChannel)
+    		return;
+    	
+    	Logger.appendString(csr.s2b("Setting channel"));
+    	Logger.flush(Mote.WARN);
+    	
+    	if (channel != CHANNEL_OFF) {
+    		// Mark the channel change as pending and wait for the rx handler to get the end signal
+    		pendingChannel = nextChannel;
+    		radio.stopRx();
+    	} else {
+    		pendingChannel = CHANNEL_OFF;
+        	channel = nextChannel;
+        	
+        	// Tune the radio and start it
+        	if (nextChannel != CHANNEL_OFF) {
+                radio.setPanId((CHANNEL_START_PAN_ID + nextChannel), false);
+                radio.setChannel((byte)(nextChannel + CHANNEL_OFFSET));
+                radio.startRx(Device.ASAP, 0, Time.currentTicks()+0x7FFFFFFF);
+                
+            	Logger.appendString(csr.s2b("Channel set"));
+            	Logger.flush(Mote.WARN);
+        	}
     	}
-	    
-        if (channel >= 0) {        	
-            radio.setChannel(channel);
-            radio.setPanId(CHANNEL_START_PAN_ID + channel, false);
-            radio.startRx(Device.ASAP, 0, Time.currentTicks() + 0x7FFFFFFF);
-        }
     }
 }

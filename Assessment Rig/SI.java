@@ -12,14 +12,14 @@ public class SI {
     private static byte[] xmit;
     private static long   wait;
     static Radio radio = new Radio();
-    private static int n = 3; // number of beacons of sync phase - sample only, assessment will use unknown values
+    private static int n = 4; // number of beacons of sync phase - sample only, assessment will use unknown values
     private static int nc;
     
-    private static int t = 700; // milliseconds between beacons - sample only, assessment will use unknown values
+    private static int t = 600; // milliseconds between beacons - sample only, assessment will use unknown values
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version
-    private static byte channel = (byte)0; // channel 11 on IEEE 802.15.4
+    private static byte channel = (byte)4; // channel 11 on IEEE 802.15.4
     private static byte panid = 0x11;
     private static byte address = 0x11;
     
@@ -102,6 +102,11 @@ public class SI {
         
         killTimer.setAlarmBySpan(Time.toTickSpan(Time.SECONDS, demoLength)); // schedule the end of the cycle, after which nothing will be done
         
+        // Turn off all LEDs
+        LED.setState((byte)0, (byte)0);
+        LED.setState((byte)1, (byte)0);
+        LED.setState((byte)2, (byte)0);
+        
         Logger.appendString(csr.s2b("Channel, network, address "));
         Logger.appendByte(channel);
         Logger.appendString(csr.s2b(" "));
@@ -126,14 +131,12 @@ public class SI {
         // add logging code to log out the originating source (for marking)
 		// frame received, blink yellow if allowed, red if not
         if (Time.currentTicks() <= receptionPhaseEnd) {
-            SI.blinkLEDAtIndex(1, 100);
             inPhasePackets = inPhasePackets + 1;
         } else {
-            SI.blinkLEDAtIndex(2, 100);
             outPhasePackets = outPhasePackets + 1;
             
             Logger.appendString(csr.s2b("Out of phase "));
-            Logger.appendLong(Time.currentTicks());
+            Logger.appendLong(Time.fromTickSpan(Time.MILLISECS, Time.currentTicks() - receptionPhaseEnd));
             Logger.flush(Mote.WARN);
         }
 		        
@@ -148,10 +151,19 @@ public class SI {
         // Stop the restart timer (to avoid sending out any more beacons)
         tstart.cancelAlarm();
         
-        // Blink all LEDs for 10s
-        SI.blinkLEDAtIndex(0, 10000);
-        SI.blinkLEDAtIndex(1, 10000);
-        SI.blinkLEDAtIndex(2, 10000);
+        // Turn off all LEDs
+        LED.setState((byte)0, (byte)0);
+        LED.setState((byte)1, (byte)0);
+        LED.setState((byte)2, (byte)0);
+        
+        // Depending on values, turn on a suitable LED
+        if (inPhasePackets > 0 && outPhasePackets == 0) {
+        	LED.setState((byte)1, (byte)1);
+        } else if (inPhasePackets > 0 && inPhasePackets > outPhasePackets) {
+        	LED.setState((byte)0, (byte)1);
+        } else {
+        	LED.setState((byte)2, (byte)1);
+        }
         
         // Log out the results
         Logger.appendString(csr.s2b("Demo ended - Correct frames "));

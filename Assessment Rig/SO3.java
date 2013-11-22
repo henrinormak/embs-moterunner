@@ -1,6 +1,7 @@
 package embs;
 
 import com.ibm.saguaro.system.*;
+import com.ibm.saguaro.logger.*;
 
 
 public class SO3 {
@@ -12,7 +13,7 @@ public class SO3 {
     
     private static byte panid = 0x14;
     private static byte address = 0x14;
-    private static byte ch = (byte)3; // channel 14 on IEEE 802.15.4
+    private static byte ch = (byte)7; // channel 14 on IEEE 802.15.4
     private static long interval = 8100;
     
     
@@ -39,6 +40,13 @@ public class SO3 {
         
         xmit[11] = 0x00;
 
+        Logger.appendString(csr.s2b("Channel, network, address "));
+        Logger.appendByte(ch);
+        Logger.appendString(csr.s2b(" "));
+        Logger.appendByte(panid);
+        Logger.appendString(csr.s2b(" "));
+        Logger.appendByte(address);
+        Logger.flush(Mote.WARN);
 
         // Setup a periodic timer callback for transmissions
         tsend = new Timer();
