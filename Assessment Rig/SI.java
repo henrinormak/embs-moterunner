@@ -7,15 +7,16 @@ public class SI {
     private static Timer  tsend;
     private static Timer  tstart;
     private static Timer  treceive;
+    private static Timer  treceiveEnd;
     private static Timer  blinkTimer = new Timer();
     
     private static byte[] xmit;
     private static long   wait;
     static Radio radio = new Radio();
-    private static int n = 4; // number of beacons of sync phase - sample only, assessment will use unknown values
+    private static int n = 3; // number of beacons of sync phase - sample only, assessment will use unknown values
     private static int nc;
     
-    private static int t = 600; // milliseconds between beacons - sample only, assessment will use unknown values
+    private static int t = 500; // milliseconds between beacons - sample only, assessment will use unknown values
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version
@@ -23,13 +24,22 @@ public class SI {
     private static byte panid = 0x11;
     private static byte address = 0x11;
     
-    private static long receptionPhaseEnd;
+    private static boolean receiving = false;
     private static int demoLength = 60;
     
     // Counting correct packets
     private static int inPhasePackets = 0;
     private static int outPhasePackets = 0;
 	private static int receptionPhaseCount = 0;
+	
+	// Calculating predicted score
+	private static int inPhasePacktesAtReception = 0;
+	private static int outPhasePacketsAtReception = 0;
+	private static int marksForMessages = 0;
+	private static int[] sourcesSeen = new int[]{0, 0, 0};
+	private final static int MARKS_PER_SOURCE = 5;
+	private final static int MARKS_PER_CORRECT_PHASE = 3;
+	private final static int MARKS_PER_INCORRECT_MESSAGE = -2;
 
     static {
         // Open the default radio
@@ -76,11 +86,19 @@ public class SI {
                 }
             });
             
-        // Timer that moves starts the receive period
+        // Timer that starts the receive period
         treceive = new Timer();
         treceive.setCallback(new TimerEvent(null){
                 public void invoke(byte param, long time){
                     SI.startReceive(param, time);
+                }
+            });
+            
+        // Timer that ends the receive period
+        treceiveEnd = new Timer();
+        treceiveEnd.setCallback(new TimerEvent(null){
+                public void invoke(byte param, long time){
+                    SI.endReceive(param, time);
                 }
             });
             
@@ -127,17 +145,17 @@ public class SI {
             radio.startRx(Device.ASAP, 0, Time.currentTicks()+0x7FFFFFFF);
             return 0;
         }
+        
+        // Mark the source as seen
+        int source = Util.get16le(data, 7) - panid - 1;
+        sourcesSeen[source] = MARKS_PER_SOURCE;
 
         // add logging code to log out the originating source (for marking)
 		// frame received, blink yellow if allowed, red if not
-        if (Time.currentTicks() <= receptionPhaseEnd) {
+        if (receiving) {
             inPhasePackets = inPhasePackets + 1;
         } else {
             outPhasePackets = outPhasePackets + 1;
-            
-            Logger.appendString(csr.s2b("Out of phase "));
-            Logger.appendLong(Time.fromTickSpan(Time.MILLISECS, Time.currentTicks() - receptionPhaseEnd));
-            Logger.flush(Mote.WARN);
         }
 		        
         return 0;
@@ -165,6 +183,12 @@ public class SI {
         	LED.setState((byte)2, (byte)1);
         }
         
+        // Add up the final score
+        int score = marksForMessages;
+        for (int i = 0; i < 3; i++) {
+	        score += sourcesSeen[i];
+        }
+        
         // Log out the results
         Logger.appendString(csr.s2b("Demo ended - Correct frames "));
         Logger.appendInt(inPhasePackets);
@@ -172,6 +196,8 @@ public class SI {
         Logger.appendInt(outPhasePackets);
         Logger.appendString(csr.s2b(". Total phases "));
         Logger.appendInt(receptionPhaseCount);
+        Logger.appendString(csr.s2b(" FINAL SCORE "));
+        Logger.appendInt(score);
         Logger.flush(Mote.WARN);
     }
 
@@ -189,6 +215,9 @@ public class SI {
         else{
         	// Start receive phase
             treceive.setAlarmBySpan(0);
+                 		
+			// schedule end of receive
+			treceiveEnd.setAlarmBySpan(wait);
             
             // Schedule the next sync phase
             tstart.setAlarmBySpan(6*wait);
@@ -197,14 +226,32 @@ public class SI {
     
 	
 	public static void startReceive(byte param, long time) {
+		// Store current state for marking
+		inPhasePacktesAtReception = inPhasePackets;
+		outPhasePacketsAtReception = outPhasePackets;
+	
 	    // start receiving for t
         SI.blinkLEDAtIndex(0, t);
-		receptionPhaseEnd = Time.currentTicks() + wait;
+		receiving = true;
 		receptionPhaseCount++;
+	}
+	
+	public static void endReceive(byte param, long time) {
+		receiving = false;
+		
+		// Calculate points
+		if ((inPhasePackets - inPhasePacktesAtReception) > 0) {
+			marksForMessages += MARKS_PER_CORRECT_PHASE;
+		}
+		
+		int diff;
+		if ((diff = outPhasePackets - outPhasePacketsAtReception) > 0) {
+			marksForMessages += (diff * MARKS_PER_INCORRECT_MESSAGE);
+		}
 	}
 
     // Called on a timer alarm, starts the protocol
-    public static void restart(byte param, long time) {
+    public static void restart(byte param, long time) {    	
         nc=n;
         xmit[11]=(byte)n;
        	tsend.setAlarmBySpan(0);

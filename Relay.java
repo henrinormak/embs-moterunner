@@ -39,8 +39,9 @@ public class Relay {
      * Timing constants, allowing some leeway in our calculations 
      * and helping with clock drift
      */
-    private final static long TIMING_BUFFER = Time.toTickSpan(Time.MILLISECS, 100L);
-    private final static long CHANNEL_DURATION = Time.toTickSpan(Time.MILLISECS, 200L);	// Amount of time we want to ideally spend listening to a channel
+    private final static long TIMING_BUFFER = Time.toTickSpan(Time.MILLISECS, 50L);			// Timing buffer, so we are never late nor early
+    private final static long CANNEL_SWITCH_BUFFER = Time.toTickSpan(Time.MILLISECS, 5L);	// Time we leave between turning radio off and turning it back on, mainly for hardware to catch up
+    private final static long CHANNEL_DURATION = Time.toTickSpan(Time.MILLISECS, 200L);		// Amount of time we want to ideally spend listening to a channel
     private final static long CHANNEL_INDEFINITE_DURATION = -1L;
     
     /**
@@ -201,7 +202,7 @@ public class Relay {
     	if (data == null) {
     		return 0;
     	}
-    	    	
+    	    	    	
         if (channel == CHANNEL_SINK) {
             Relay.onSinkReceive(flags, data, len, info, time);
         } else if (channel == CHANNEL_SOURCE_1 || channel == CHANNEL_SOURCE_2 || channel == CHANNEL_SOURCE_3) {
@@ -289,15 +290,15 @@ public class Relay {
 				Logger.appendLong(Time.fromTickSpan(Time.MILLISECS, currentEstimate));
 				Logger.flush(Mote.WARN);
 								
-                sinkTimer.setAlarmBySpan(timeTilNext);
+                sinkTimer.setAlarmTime(time + timeTilNext);
 
                 // Start transmitting in t (as this is the last n)
                 // Adding t puts us well into the reception phase, which should avoid sending
                 // frames too early
-                transmissionTimer.setAlarmBySpan(currentEstimate);
+                transmissionTimer.setAlarmTime(time + currentEstimate);
                 
                 // Re-schedule the session end (in case our estimates improved or in case this was the first sync)
-                popTimer.setAlarmBySpan(2 * currentEstimate);
+                popTimer.setAlarmTime(time + (2 * currentEstimate));
             }
         }
                         
@@ -323,7 +324,7 @@ public class Relay {
 	    
 		// We can immediately reschedule the timer as well (as we don't know for how long we have been listening to this channel)
 		Timer timer = channelTimers[index];
-		timer.setAlarmBySpan(channelPeriods[index] - TIMING_BUFFER);
+		timer.setAlarmTime(time + channelPeriods[index] - TIMING_BUFFER);
 		
 		// Read out the values from the data
         int srcPanID = Util.get16le(data, 7);
@@ -336,7 +337,7 @@ public class Relay {
     	Logger.appendString(csr.s2b(" "));
     	Logger.appendByte(radio.getChannel());
     	Logger.appendString(csr.s2b(" payload "));
-    	Logger.appendInt(payload);
+    	Logger.appendByte((byte)payload);
     	Logger.flush(Mote.WARN);
     	        
         Frame frame = new Frame(srcPanID, srcAddr, payload, time);
@@ -367,7 +368,7 @@ public class Relay {
      * @param time
      */
     private static void onScheduleTransmit(byte param, long time) {
-        transmissionTimer.setAlarmBySpan(channelPeriods[CHANNEL_SINK]);
+        transmissionTimer.setAlarmTime(time + channelPeriods[CHANNEL_SINK]);
         transmissionDeadline = Time.currentTicks() + estimatedSinkFrame.getTime() - TIMING_BUFFER; 
         
 		// Transmit from buffer, the Tx handler takes care of continuing transmission for as long as possible
@@ -450,7 +451,7 @@ public class Relay {
         // one communication from the channel represented by this timer
         int index = (int)param;
         Timer timer = channelTimers[index];
-        timer.setAlarmBySpan(channelPeriods[index]);
+        timer.setAlarmTime(time + channelPeriods[index]);
         
         // Switch to the channel if we can
         byte currentChannel = Relay.getChannel();
@@ -489,7 +490,7 @@ public class Relay {
     	if (nextChannel != CHANNEL_OFF) {
             radio.setChannel((byte)(nextChannel + CHANNEL_OFFSET));
             radio.setPanId((CHANNEL_START_PAN_ID + nextChannel), false);
-            radio.startRx(Device.ASAP, 0, Time.currentTicks()+RX_MAX_TIME);
+            radio.startRx(Device.TIMED, Time.currentTicks()+CANNEL_SWITCH_BUFFER, Time.currentTicks()+RX_MAX_TIME);
     	}
     }
 }

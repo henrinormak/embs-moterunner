@@ -30,7 +30,7 @@ public class FrameBuffer {
 	}
 	
 	/*
-	 * @return a frame from the buffer, decrements the count
+	 * @return a frame from the buffer
 	 */
 	public Frame pull() {
 		if (end == start)
