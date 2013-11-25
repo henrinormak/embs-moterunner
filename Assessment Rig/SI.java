@@ -16,7 +16,7 @@ public class SI {
     private static int n = 3; // number of beacons of sync phase - sample only, assessment will use unknown values
     private static int nc;
     
-    private static int t = 500; // milliseconds between beacons - sample only, assessment will use unknown values
+    private static int t = 750; // milliseconds between beacons - sample only, assessment will use unknown values
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version

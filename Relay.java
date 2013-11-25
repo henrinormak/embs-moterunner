@@ -247,7 +247,7 @@ public class Relay {
             long currentEstimate = estimatedSinkFrame.getTime();
             long deltaT = time - latestSinkFrame.getTime();
             long packetT = deltaT / (latestSinkFrame.getPayload() - payload);
-            
+                        
             // Store the new estimated time
             estimatedSinkFrame.setTime(packetT);
         } else {
@@ -259,7 +259,7 @@ public class Relay {
         if (payload == 1) {
             // Last frame of the sync phase, start transmitting (if our estimate is trustworthy)
             long currentEstimate = estimatedSinkFrame.getTime();
-            if (currentEstimate >= Relay.BEACON_MIN_TIME && currentEstimate <= Relay.BEACON_MAX_TIME) {
+            if (currentEstimate > 0) {
                 Timer sinkTimer = channelTimers[CHANNEL_SINK];
                 
                 // Update the period we predict for the sink
@@ -400,7 +400,7 @@ public class Relay {
 		transmissionFrame[11] = (byte)nextFrame.getPayload();
 		
 		// Tx handler will take care of the recursion (i.e sending more frames than 1)
-		radio.transmit(Device.TIMED|transmissionSignalStrength, transmissionFrame, 0, 12, Time.currentTicks()+RADIO_SWITCH_BUFFER);
+		radio.transmit(Device.ASAP|transmissionSignalStrength, transmissionFrame, 0, 12, 0);
     }
         
         
