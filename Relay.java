@@ -40,7 +40,7 @@ public class Relay {
      * and helping with clock drift
      */
     private final static long TIMING_BUFFER = Time.toTickSpan(Time.MILLISECS, 50L);			// Timing buffer, so we are never late nor early
-    private final static long CANNEL_SWITCH_BUFFER = Time.toTickSpan(Time.MILLISECS, 5L);	// Time we leave between turning radio off and turning it back on, mainly for hardware to catch up
+    private final static long RADIO_SWITCH_BUFFER = Time.toTickSpan(Time.MILLISECS, 5L);	// Time we leave between turning radio off and turning it back on, mainly for hardware to catch up
     private final static long CHANNEL_DURATION = Time.toTickSpan(Time.MILLISECS, 200L);		// Amount of time we want to ideally spend listening to a channel
     private final static long CHANNEL_INDEFINITE_DURATION = -1L;
     
@@ -65,7 +65,7 @@ public class Relay {
     /*
      * While debugging add an offset to keep away from interference
      */
-    private final static byte CHANNEL_OFFSET = (byte)4;
+    private final static byte SINK_CHANNEL_OFFSET = (byte)5;
     
     /**
      * Sync phases we require the system to look at, after these only the transmission phase is scheduled
@@ -116,6 +116,7 @@ public class Relay {
 		// this allows some flexibility when it comes to source addresses and the sink address
     	transmissionFrame[0] = Radio.FCF_BEACON;
     	transmissionFrame[1] = Radio.FCA_SRC_SADDR|Radio.FCA_DST_SADDR;
+		Util.set16le(transmissionFrame, 5, Radio.SADDR_BROADCAST);
 
         // Configure the radio
         radio.open(Radio.DID, null, 0, 0);
@@ -246,7 +247,7 @@ public class Relay {
             long currentEstimate = estimatedSinkFrame.getTime();
             long deltaT = time - latestSinkFrame.getTime();
             long packetT = deltaT / (latestSinkFrame.getPayload() - payload);
-            
+                        
             // Store the new estimated time
             estimatedSinkFrame.setTime(packetT);
         } else {
@@ -258,7 +259,7 @@ public class Relay {
         if (payload == 1) {
             // Last frame of the sync phase, start transmitting (if our estimate is trustworthy)
             long currentEstimate = estimatedSinkFrame.getTime();
-            if (currentEstimate >= Relay.BEACON_MIN_TIME && currentEstimate <= Relay.BEACON_MAX_TIME) {
+            if (currentEstimate > 0) {
                 Timer sinkTimer = channelTimers[CHANNEL_SINK];
                 
                 // Update the period we predict for the sink
@@ -394,11 +395,10 @@ public class Relay {
 	    Frame nextFrame = frameBuffer.pull();
 	    
 		Util.set16le(transmissionFrame, 3, estimatedSinkFrame.getPanID());
-		Util.set16le(transmissionFrame, 5, estimatedSinkFrame.getAddress());
-		Util.set16le(transmissionFrame, 7, (byte)nextFrame.getPanID());
-		Util.set16le(transmissionFrame, 9, (byte)nextFrame.getAddress());
+		Util.set16le(transmissionFrame, 7, estimatedSinkFrame.getPanID());
+		Util.set16le(transmissionFrame, 9, (byte)nextFrame.getAddress());	// Pass along the proper source address, we have to change the PAN ID though...
 		transmissionFrame[11] = (byte)nextFrame.getPayload();
-				
+		
 		// Tx handler will take care of the recursion (i.e sending more frames than 1)
 		radio.transmit(Device.ASAP|transmissionSignalStrength, transmissionFrame, 0, 12, 0);
     }
@@ -504,9 +504,13 @@ public class Relay {
     	
     	// Tune the radio and start it, if it was not meant to stay off
     	if (nextChannel != CHANNEL_OFF) {
-            radio.setChannel((byte)(nextChannel + CHANNEL_OFFSET));
-            radio.setPanId((CHANNEL_START_PAN_ID + nextChannel), false);
-            radio.startRx(Device.TIMED, Time.currentTicks()+CANNEL_SWITCH_BUFFER, Time.currentTicks()+RX_MAX_TIME);
+    		int panid = nextChannel + CHANNEL_START_PAN_ID;
+    		if (nextChannel == CHANNEL_SINK)
+    			nextChannel += SINK_CHANNEL_OFFSET;
+    		
+            radio.setChannel(nextChannel);
+            radio.setPanId(panid, false);
+            radio.startRx(Device.TIMED, Time.currentTicks()+RADIO_SWITCH_BUFFER, Time.currentTicks()+RX_MAX_TIME);
     	}
     }
 }

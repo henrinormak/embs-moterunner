@@ -16,11 +16,11 @@ public class SI {
     private static int n = 3; // number of beacons of sync phase - sample only, assessment will use unknown values
     private static int nc;
     
-    private static int t = 500; // milliseconds between beacons - sample only, assessment will use unknown values
+    private static int t = 750; // milliseconds between beacons - sample only, assessment will use unknown values
     
     // settings for sink 
     // TODO: Fix the channel numbering to be the final demo version
-    private static byte channel = (byte)4; // channel 11 on IEEE 802.15.4
+    private static byte channel = (byte)5; // channel 11 on IEEE 802.15.4
     private static byte panid = 0x11;
     private static byte address = 0x11;
     
@@ -146,8 +146,12 @@ public class SI {
             return 0;
         }
         
+        Logger.appendString(csr.s2b("Received frame "));
+        Logger.appendByte(data[11]);
+        Logger.flush(Mote.WARN);
+        
         // Mark the source as seen
-        int source = Util.get16le(data, 7) - panid - 1;
+        int source = Util.get16le(data, 9) - address - 1;
         sourcesSeen[source] = MARKS_PER_SOURCE;
 
         // add logging code to log out the originating source (for marking)
