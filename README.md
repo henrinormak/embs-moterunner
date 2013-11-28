@@ -3,9 +3,9 @@ embs-moterunner
 
 Simple implementation of a relay node, designed to forward frames from multiple sources on different channels to one sink node. The protocol the nodes on the network are assumed to follow are as follows:
 
-1) Each channel is assumed to contain only one other mote, the channels are prioritised based on their numbers - lower channel number leads to a higher priority.
-2) The PAN ID used by each mote should match the channel number they are on.
-3) The sink node should be on the lowest channel of the sources.
+1.	Each channel is assumed to contain only one other mote, the channels are prioritised based on their numbers - lower channel number leads to a higher priority.
+2.	The PAN ID used by each mote should match the channel number they are on.
+3.	The sink node should be on the lowest channel of the sources.
 
 
 Implementation
