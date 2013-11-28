@@ -16,7 +16,7 @@
 package embs;
 
 import com.ibm.saguaro.system.*;
-import com.ibm.saguaro.logger.*;
+
 import embs.Frame;
 import embs.FrameBuffer;
 import embs.Session;
