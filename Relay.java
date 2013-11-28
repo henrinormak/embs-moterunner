@@ -62,11 +62,6 @@ public class Relay {
     private final static byte CHANNEL_SOURCE_3 = (byte)3;
     private final static int CHANNEL_COUNT = 4;
 
-    /*
-     * While debugging add an offset to keep away from interference
-     */
-    private final static byte SINK_CHANNEL_OFFSET = (byte)5;
-
     /**
      * Sync phases we require the system to look at, after these only the transmission phase is scheduled
      * Increasing this number will produce more reliable estimates about the sink, but will allow the relay
@@ -477,14 +472,12 @@ public class Relay {
     	// Tune the radio and start it, if it was not meant to stay off
     	if (nextChannel != CHANNEL_OFF) {
     		int panid = nextChannel + CHANNEL_START_PAN_ID;
-    		if (nextChannel == CHANNEL_SINK)
-    			nextChannel += SINK_CHANNEL_OFFSET;
 
             radio.setChannel(nextChannel);
             radio.setPanId(panid, false);
 
             // Start the radio with a small delay
-            // TODO: This is a workaround for an IBM bug which causes the radio to start listening to the old channel, remove when the delay when the bug is fixed
+            // TODO: This is a workaround for an IBM bug which causes the radio to start listening to the old channel, remove the delay when the bug is fixed
             radio.startRx(Device.TIMED, Time.currentTicks()+RADIO_SWITCH_BUFFER, Time.currentTicks()+RX_MAX_TIME);
     	}
     }
