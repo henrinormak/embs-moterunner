@@ -1,39 +1,39 @@
 embs-moterunner
 ===============
 
-EMBS moterunner assessment
+Simple implementation of a relay node, designed to forward frames from multiple sources on different channels to one sink node. The protocol the nodes on the network are assumed to follow are as follows:
 
-Initial implementation
-======================
+1) Each channel is assumed to contain only one other mote, the channels are prioritised based on their numbers - lower channel number leads to a higher priority.
+2) The PAN ID used by each mote should match the channel number they are on.
+3) The sink node should be on the lowest channel of the sources.
 
-No energy saving, just keep Rx open and forward frames from queues. Keep 3 queues of frames around (in case we can send more than one during the reception phase).
 
-* Keep a limit on the queues to avoid running out of memory (unlikely, but still capping the queues to 5 should be enough, as there will be at least on reception during that time)
-* If a frame comes in, place it in a circular FIFO buffer (perhaps make a special class for this?). This will result in a FIFO relay, which drops older frames first.
-* When relay receives beacon from sink, store the time and payload number. When another comes in, calculate the time difference and divide by the difference in the payload to figure out t. With two of these packets the start of reception phase can be calculated, but the system is fragile towards clock drift. Ideally an average over the entire synchronisation phase is used as t.
-* As t and n never change during the lifetime, we could calculate this once and then figure out any future timings. This assumes we capture n correctly and t is accurate. Might need to allow for two of such cycles to agree on the values (i.e if we receive n = 10 twice as the first in the sequence, then it is likely true).
-* Use a tx handler to make the next send (conditional on the queues and how much time it took to complete transmission of the last frame, to avoid slipping out of the reception phase), first frame is scheduled in the rx callback for the final synchronisation beacon (n = 1).
+Implementation
+==============
 
-Variables
----------
+`Relay` contains code for a node that is capable of acting as a relay in a network of nodes. Receiving from multiple channels, priority ordered based on their channel number, and sending to one channel, the sink.
+Relay operates in two modes, first it starts by determining the exact timings of the sink and the sources, after which it enters the second phase - periodic event handling for transmission and reception. Code for the other nodes in the network is in the `Assessment Rig` directory.
 
-* `n` FIFO circular buffers of size x, where n == no. sources, x some predefined constant, like 5
-* `radio`
-* `lastTxTimestamp` for last send (for comparison and predicting if another send can be squeezed in or not)
-* `estimateT`, initialise to 500ms (and keep clamped to between 500-1500. Recalculate with every new beacon frame received which has a `payload` higher than the last received frame
-* `estimateN`, initialise to 2 (and keep clamped between 2-10), assign whenever we see a beacon with a higher number in `payload`
-* `latestBeacon`, latest beacon we have received, updated with each beacon we get
+Relay uses an internal data structure called `Frame` to represent frames received from the sources/sink, it stores frames received from sources in a `FrameBuffer`, a circular buffer with fixed size specified by `Relay`. Additionally, `Relay` uses an internal representation for the period of time it has to spend on a specific channel called `Session`. In order to enforce the priority and offer efficient channel switching the `Session` objects are stored in a `SessionStack`, acting as a FILO queue. The bottom of this stack consists of special `Session` objects, that are never to be popped based on time, these form the discovery phase of `Relay`.
 
-Notes
------
+Adding nodes to the list the Relay listens to can be done by following these steps:
+1) Adding new constants to `Relay.java`, following the form of `CHANNEL_SOURCE_1` ... `CHANNEL_SOURCE_N`
+2) Increment the `CHANNEL_COUNT` constant to match the number of sources
+3) Adding new items to the `channelPeriods`, `channelDurations` and `channelTimers` lists to represent the added channels
+4) Pushing indefinite `Session` objects to the stack around `Relay.java:167`, note that these sessions should be in priority order on the stack.
 
-It might make sense to make a simple data object for the `beacon` type, this would replace the `latestBeacon` and `estimateT`/`estimateN` variables with just two of these objects
-Values needed for future reference `time` when received, `payload` i.e the n value and `t` i.e the predicted t for that particular beacon.
 
-The relay does not need any timers, as the timing can be figured out using values we get back from Tx and Rx. Potentially the logic can be made even smarter and thus the radio might be turned off when no incoming data is scheduled for the next x seconds.
+Energy efficiency
+=================
 
-Keep track of four timings, one for each channel we have to switch to (an absolute time), this time will be recalculated when the channel session finishes (if a frame is captured or when the session ends without a capture)
+There are certain aspects to `Relay` that offer ways to save energy. First of them is the `SessionStack` structure. After the discovery of every source and the sink has completed, the stack will contain only one indeterminate `Session` representing CHANNEL_OFF, a special internal constant used to indicate that the radio should be turned off. This means that during the majority of the runtime, the radio will be turned off thus saving energy.
+
+In addition, the signal strength for transmission is determined during the discovery phase based on the RSSI of the sink node frames. This means that the transmission is not as strong in cases where the sink is closer to the `Relay`. The downside to this approach is the fact that the signal strength is determined during the discovery phase and not updated afterwards, meaning the sink is not expected to move in relation to `Relay`. This could potentially be overcome, by increasing the `SYNC_PHASES_REQUIRED` constant in `Relay` to be more than 1. This constant determines how many sync periods from the sink the `Relay` has to process. Note, the discovery phase lasts for exactly 1 of those sync phases, so increasing this number does not necessarily mean a longer discovery phase. It could, however, mean that more frames are dropped as the sink channel has the highest priority and thus pre-empts other channels.
+
 
 Testing
--------
-Based on the code samples given with the assessment, create a test SI that logs out all received frames and whether it was within correct phase or not. Also count the number of frames received from each address and log that out when the entire cycle ends (60s in the demo).
+=======
+
+`Assessment Rig/SI.java` contains two variables, that affect the performance of the `Relay`, `n` and `t` for the number of frames sent during a sync phase and the duration of each of those frames respectively. The `Relay` is able to determine these two values, with `t` being constrained to 500ms <= `t` <= 1500ms, but can be configured to tolerate other values by adjusting the `BEACON_MIN_TIME` and `BEACON_MAX_TIME` constants in `Relay.java`.
+
+In ideal scenarios, the `Relay` is able to forward almost all frames after the initial discovery phase has ended, in case of collisions between two source events, the one with higher priority is chosen (the one which has a lower channel number).
