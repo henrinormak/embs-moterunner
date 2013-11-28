@@ -94,7 +94,7 @@ public class Relay {
      */
     private static Timer transmissionTimer = new Timer();
     private static long transmissionDeadline = 0;
-    private static byte[] transmissionFrame = new byte[12];
+    private static byte[] transmissionFrame = new byte[15];
     private static int transmissionSignalStrength = Radio.TXMODE_POWER_MAX;	// Adjust this during the sync phases to match the RSSI we see from the sink
 
     /**
@@ -103,8 +103,8 @@ public class Relay {
      * Initialise the estimate to be invalid, our logic trusts the estimate as long as it is in within given spec range
      * thus it will become trusted after a few sync frames have been received and will be affirmed by future frames
      */
-    private static Frame latestSinkFrame = new Frame((byte)0, (byte)0, 0, 0);
-    private static Frame estimatedSinkFrame = new Frame((byte)0, (byte)0, 0, 0);
+    private static Frame latestSinkFrame = new Frame((byte)0, (byte)0, new byte[1], 1, 0);
+    private static Frame estimatedSinkFrame = new Frame((byte)0, (byte)0, new byte[1], 1, 0);
 
     static {
     	// Pretune the transmission frame we use, payload and addressing are figured out when sending
@@ -214,22 +214,28 @@ public class Relay {
         // Read out the values from the data
         int srcPanID = Util.get16le(data, 7);
         int srcAddr = Util.get16le(data, 9);
-        int payload = (int)data[11];
+        byte[] payload = new byte[]{data[11]};	// Sink frames have only one payload frame (because 2 <= n <= 10)
+        int n = (int)payload[0];
+
+        int latestN = (int)latestSinkFrame.getPayloadByteAtIndex(0);
+        int estimatedN = (int)estimatedSinkFrame.getPayloadByteAtIndex(0);
 
         // The estimated n is simply the highest n value we have seen thus far
-        if (payload > estimatedSinkFrame.getPayload())
-            estimatedSinkFrame.setPayload(payload);
+        if (n > estimatedN) {
+	    	estimatedSinkFrame.setPayload(payload, 1);
+	    	estimatedN = n;
+        }
 
         // The source address and PAN ID are the latest we have seen, so always update
         estimatedSinkFrame.setPanID(srcPanID);
         estimatedSinkFrame.setAddress(srcAddr);
 
         // If this package is part of the same sequence (or likely to be part of the same sequence)
-        if (payload < latestSinkFrame.getPayload()) {
+        if (n < latestN) {
             // Figure out the delta from the last frame
             long currentEstimate = estimatedSinkFrame.getTime();
             long deltaT = time - latestSinkFrame.getTime();
-            long packetT = deltaT / (latestSinkFrame.getPayload() - payload);
+            long packetT = deltaT / (latestN - n);
 
             // Store the new estimated time
             estimatedSinkFrame.setTime(packetT);
@@ -239,7 +245,7 @@ public class Relay {
             syncPhasesSeen = syncPhasesSeen + 1;
         }
 
-        if (payload == 1) {
+        if (n == 1) {
             // Last frame of the sync phase, start transmitting (if our estimate is trustworthy)
             long currentEstimate = estimatedSinkFrame.getTime();
             if (currentEstimate > 0) {
@@ -247,14 +253,14 @@ public class Relay {
 
                 // Update the period we predict for the sink
                 // 6 = 1 reception + 5 sleep
-                long period = currentEstimate * (6 + estimatedSinkFrame.getPayload());
+                long period = currentEstimate * (6 + estimatedN);
 
 				// Calculate the duration of the channel and the next time we have to open it
                 long timeTilNext = period + currentEstimate - TIMING_BUFFER;
                 long duration = currentEstimate;
                 if (syncPhasesSeen < SYNC_PHASES_REQUIRED) {
 					timeTilNext = currentEstimate * 7 - TIMING_BUFFER;
-					duration += currentEstimate * estimatedSinkFrame.getPayload();
+					duration += currentEstimate * estimatedN;
 				}
 
 				channelPeriods[CHANNEL_SINK] = period;
@@ -281,7 +287,7 @@ public class Relay {
         latestSinkFrame.setPanID(srcPanID);
         latestSinkFrame.setAddress(srcAddr);
         latestSinkFrame.setTime(time);
-        latestSinkFrame.setPayload(payload);
+        latestSinkFrame.setPayload(payload, 1);
     }
 
     /**
@@ -306,9 +312,14 @@ public class Relay {
 		// Read out the values from the data
         int srcPanID = Util.get16le(data, 7);
         int srcAddr = Util.get16le(data, 9);
-        int payload = (int)data[11];
 
-        Frame frame = new Frame(srcPanID, srcAddr, payload, time);
+        int payloadLen = len - 11;
+        byte[] payload = new byte[payloadLen];
+        for (int i = 0; i < payloadLen; i++) {
+	        payload[i] = data[11 + i];
+        }
+
+        Frame frame = new Frame(srcPanID, srcAddr, payload, payloadLen, time);
         frameBuffer.push(frame);
 
 		// Terminate the session immediately as there is only 1 frame per source period
@@ -364,10 +375,13 @@ public class Relay {
 		Util.set16le(transmissionFrame, 3, estimatedSinkFrame.getPanID());
 		Util.set16le(transmissionFrame, 7, estimatedSinkFrame.getPanID());
 		Util.set16le(transmissionFrame, 9, (byte)nextFrame.getAddress());	// Pass along the proper source address, we have to change the PAN ID though...
-		transmissionFrame[11] = (byte)nextFrame.getPayload();
+
+		for (int i = 0; i < nextFrame.getPayloadLength(); i++) {
+			transmissionFrame[11 + i] = nextFrame.getPayloadByteAtIndex(i);
+		}
 
 		// Tx handler will take care of the recursion (i.e sending more frames than 1)
-		radio.transmit(Device.ASAP|transmissionSignalStrength, transmissionFrame, 0, 12, 0);
+		radio.transmit(Device.ASAP|transmissionSignalStrength, transmissionFrame, 0, 11 + nextFrame.getPayloadLength(), 0);
     }
 
 

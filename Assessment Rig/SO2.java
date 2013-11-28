@@ -30,7 +30,7 @@ public class SO2 {
         radio.setShortAddr(address);
 
         // Prepare beacon frame with source and destination addressing
-        xmit = new byte[12];
+        xmit = new byte[13];
         xmit[0] = Radio.FCF_BEACON;
         xmit[1] = Radio.FCA_SRC_SADDR|Radio.FCA_DST_SADDR;
         Util.set16le(xmit, 3, panid); // destination PAN address
@@ -39,6 +39,7 @@ public class SO2 {
         Util.set16le(xmit, 9, address); // own short address
 
         xmit[11] = 0x00;
+        xmit[12] = 0x00;
 
         Logger.appendString(csr.s2b("Channel, network, address "));
         Logger.appendByte(ch);
@@ -75,10 +76,10 @@ public class SO2 {
 		light=!light;
 
         // increment payload
-        xmit[11]++;
+        xmit[12]++;
 
         // send the message
-        radio.transmit(Device.ASAP|Radio.TXMODE_CCA, xmit, 0, 12, 0);
+        radio.transmit(Device.ASAP|Radio.TXMODE_CCA, xmit, 0, 13, 0);
         // Setup a new alarm
         tsend.setAlarmBySpan(xmitDelay);
     }

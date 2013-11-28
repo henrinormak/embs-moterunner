@@ -145,8 +145,13 @@ public class SI {
             return 0;
         }
 
-        Logger.appendString(csr.s2b("Received frame "));
-        Logger.appendByte(data[11]);
+        Logger.appendString(csr.s2b("Received frame, len "));
+        Logger.appendInt(len);
+        Logger.appendString(csr.s2b(" bytes "));
+        for (int i = 0; i < len - 11; i++) {
+	        Logger.appendHexByte(data[11+i]);
+	        Logger.appendString(csr.s2b(" "));
+        }
         Logger.flush(Mote.WARN);
 
         // Mark the source as seen
