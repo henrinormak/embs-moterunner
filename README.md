@@ -1,11 +1,17 @@
 embs-moterunner
 ===============
 
-Simple implementation of a relay node, designed to forward frames from multiple sources on different channels to one sink node. The protocol the nodes on the network are assumed to follow are as follows:
+> The Mote Runner on-mote run-time platform is based on a virtual machine tailored from scratch for resource-constraint hardware environments. For this, it introduces a new byte-code language that, besides being compact and efficient, provides native support for reactive programming by means of delegates. Together with the run-time library built on top, Mote Runner provides a purely event-driven and thread-free programming model.
+
+[Mote Runner](http://www.zurich.ibm.com/moterunner/) is IBM's infrastructure platform for wireless sensor networks (WSN), aimed at embedded systems with little to no resources, to monitor and communicate readings from the environment or affect actuators connected to physical motes wirelessly.
+
+This repository contains a simple implementation of a relay node built as part of the Embedded Systems Design and Implementation (EMBS) module at the University of York, designed to forward frames from multiple sources on different channels to one sink node. The nodes communicate using the IEEE 801.15.4 protocol, on top of which sits a further communication protocol to simplify the communication:
 
 1.	Each channel is assumed to contain only one other mote, the channels are prioritised based on their numbers - lower channel number leads to a higher priority.
 2.	The PAN ID used by each mote is tied to the channel number they are on, for example channel 0 => PAN ID 0x11, channel 10 => 0x21 and so on.
 3.	The sink node should be on the lowest channel of the sources.
+
+A further overview of how the relay operates is provided in `Report/Report_PDF.pdf`.
 
 
 Implementation
